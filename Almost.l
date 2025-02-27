@@ -59,21 +59,32 @@ int line_number = 1;
 
 %}
 
-digit  [0-9]
+/* Reordered and regrouped patterns with same matches */
+lc      [a-z]
+dgt     [0-9]
+oct     [0-7]
+bin     [01]
 
-ID     {lc}(({lc}|{digit})*_?({lc}|{digit})*)
-DECIMAL \(({digit}+|{ID})" "?," "?10\)
-OCTAL   \([0-7]+," "?8\)
-BINARY  \([01]+," "?2\)
-INVALID_INT \([0-9]*," "*[0-9]*\)
-INVALID_VAR (_.*|{digit}.*|{lc}(({lc}|{digit})*_?({lc}|{digit})*)*)
-SCAN_INVALID scan\(.*\)\;?
-SCAN_VALID scan\(\".*\"(" "*," "*{ID})*\)\;
-PRINT_VALID print\(\".*\"(" "*," "*{ID})*\)\;
-PRINT_INVALID print\(.*\)\;?
-lc  [a-z]
-ARRAYID {ID}\[({digit}+|{ID})\]
-%start VARDECL VARDECL_ID VARDECL_TYPE
+DECIMAL \(({dgt}+|{ID})[ ]*,[ ]*10\)
+BINARY  \([ ]*{bin}+[ ]*,[ ]*2[ ]*\)
+OCTAL   \([ ]*{oct}+[ ]*,[ ]*8[ ]*\)
+
+INVALID_INT \([ ]*{dgt}*[ ]*,[ ]*{dgt}*[ ]*\)
+INVALID_VAR (_[^ ]*|{dgt}[^ ]*|{lc}([_]?{lc}*{dgt}*)*[_]?{lc}*{dgt}*)
+
+SCAN_VALID scan\(\"[^\"]*\"([ ]*,[ ]*{ID})*\)[ ]*;
+SCAN_INVALID scan\([^\)]*\)[ ]*;?
+PRINT_VALID print\(\"[^\"]*\"([ ]*,[ ]*{ID})*\)[ ]*;
+PRINT_INVALID print\([^\)]*\)[ ]*;?
+
+ARRAYID {ID}\[[ ]*({dgt}+|{ID})[ ]*\]
+
+/* Restructured ID pattern */
+ID      {lc}(({dgt}*[_]?{lc}*)|({lc}*[_]?{dgt}*))+
+
+/* Start states reordered */
+%start VARDECL_ID VARDECL_TYPE VARDECL
+
 
 %%
 
@@ -150,28 +161,23 @@ if(at_count - var_count) {  // Check difference instead of direct comparison
 <VARDECL_TYPE>"int"|"char" { printf("%s Keyword\n", yytext); }
 {SCAN_INVALID} { printf("%s Invalid input statement\n", yytext); }
 {PRINT_VALID} {
-    char *q_pos = strchr(yytext, '\"');
-    char format_string[256] = {0};
-    int var_count = 0, at_count = 0;
-    
-    /* Extract format string using pointer arithmetic */
-    if(q_pos) {
-        char *start = yytext + 6;  // Skip "print("
-        char *end = strchr(start, '\"');
-        if(end) {
-            strncpy(format_string, start, end - start);
-            format_string[end - start] = '\0';
-        }
-    }
-    
+    char format_string[256];
+    int at_count = 0, var_count = 0;
+    sscanf(yytext, "print(\"%[^\"]\"", format_string);
+    //printf("format_string: %s\n", format_string);
     at_count = count_char(format_string, '@');
-    var_count = q_pos ? count_char(q_pos, ',') : 0;
-    
-    // Adjust count using different arithmetic
-    var_count += (at_count > 1) ? (1 - at_count) : 0;
-    
-    /* Modified comparison logic */
-    if(at_count - var_count != 0) {
+    //printf("at_count:%d\n", at_count);
+    const char *comma_ptr = strchr(yytext, '\"');
+    //printf("comma_ptr:%s\n", comma_ptr);
+    var_count = count_char(comma_ptr, ',');
+
+    if(at_count > 1){
+    	var_count += 1;
+    	var_count -= at_count;
+    }
+
+    /* Check if counts match */
+    if (at_count != var_count) {
         printf("%s Error: invalid output statement\n", yytext);
     } else {
         printf("%s Valid output statement\n", yytext);
