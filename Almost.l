@@ -69,15 +69,15 @@ DECIMAL \(({dgt}+|{ID})[ ]*,[ ]*10\)
 BINARY  \([ ]*{bin}+[ ]*,[ ]*2[ ]*\)
 OCTAL   \([ ]*{oct}+[ ]*,[ ]*8[ ]*\)
 
-INVALID_INT \([ ]*{dgt}*[ ]*,[ ]*{dgt}*[ ]*\)
-INVALID_VAR (_[^ ]*|{dgt}[^ ]*|{lc}([_]?{lc}*{dgt}*)*[_]?{lc}*{dgt}*)
+DARTH_INT \([ ]*{dgt}*[ ]*,[ ]*{dgt}*[ ]*\)
+DARTH_VAR (_[^ ]*|{dgt}[^ ]*|{lc}([_]?{lc}*{dgt}*)*[_]?{lc}*{dgt}*)
 
-SCAN_VALID scan\(\"[^\"]*\"([ ]*,[ ]*{ID})*\)[ ]*;
-SCAN_INVALID scan\([^\)]*\)[ ]*;?
+SCAN scan\(\"[^\"]*\"([ ]*,[ ]*{ID})*\)[ ]*;
+DARTH_SCAN scan\([^\)]*\)[ ]*;?
 PRINT_VALID print\(\"[^\"]*\"([ ]*,[ ]*{ID})*\)[ ]*;
 PRINT_INVALID print\([^\)]*\)[ ]*;?
 
-ARRAYID {ID}\[[ ]*({dgt}+|{ID})[ ]*\]
+FORCE_ARR {ID}\[[ ]*({dgt}+|{ID})[ ]*\]
 
 /* Restructured ID pattern */
 ID      {lc}(({dgt}*[_]?{lc}*)|({lc}*[_]?{dgt}*))+
@@ -125,7 +125,7 @@ transition:
 <VARDECL_ID>","     { printf(", Separator\n"); }  // This ensures proper format
 
 
-{SCAN_VALID} {
+{SCAN} {
     char format_string[256];
 const char *comma_ptr = strchr(yytext, '\"');
 int var_count = comma_ptr ? count_char(comma_ptr, ',') : 0;
@@ -159,21 +159,35 @@ if(at_count - var_count) {  // Check difference instead of direct comparison
 <VARDECL>";"        { printf("; Separator\n"); }
 <VARDECL>"("        { printf("( Separator\n"); BEGIN(VARDECL_ID); }  
 <VARDECL_TYPE>"int"|"char" { printf("%s Keyword\n", yytext); }
-{SCAN_INVALID} { printf("%s Invalid input statement\n", yytext); }
+{DARTH_SCAN} { printf("%s Invalid input statement\n", yytext); }
 {PRINT_VALID} {
     char format_string[256];
     int at_count = 0, var_count = 0;
-    sscanf(yytext, "print(\"%[^\"]\"", format_string);
-    //printf("format_string: %s\n", format_string);
-    at_count = count_char(format_string, '@');
-    //printf("at_count:%d\n", at_count);
-    const char *comma_ptr = strchr(yytext, '\"');
-    //printf("comma_ptr:%s\n", comma_ptr);
-    var_count = count_char(comma_ptr, ',');
+    const char *start_ptr = strstr(yytext, "print(\"");
+    const char *end_ptr = strchr(start_ptr + 7, '\"');
 
-    if(at_count > 1){
-    	var_count += 1;
-    	var_count -= at_count;
+    if (start_ptr && end_ptr) {
+        strncpy(format_string, start_ptr + 7, end_ptr - (start_ptr + 7));
+        format_string[end_ptr - (start_ptr + 7)] = '\0'; // Null-terminate the string
+    }
+
+    // Count occurrences of '@' in the format string
+    for (const char *ptr = format_string; *ptr != '\0'; ptr++) {
+        if (*ptr == '@') {
+            at_count++;
+        }
+    }
+
+    // Count occurrences of ',' after the format string
+    const char *comma_ptr = end_ptr + 1;
+    while ((comma_ptr = strchr(comma_ptr, ',')) != NULL) {
+        var_count++;
+        comma_ptr++;
+    }
+
+    if (at_count > 1) {
+        var_count += 1;
+        var_count -= at_count;
     }
 
     /* Check if counts match */
@@ -188,26 +202,41 @@ if(at_count - var_count) {  // Check difference instead of direct comparison
 {PRINT_INVALID} { printf("%s Invalid output statement\n", yytext); }
 
 
-(int|char|if|else|while|for|main|begin|end|print|scan|program|VarDecl|inc|dec|then|to|do) { printf("%s Keyword \n", yytext); }
-{ID} { printf("%s Identifier \n", yytext); }
-{DECIMAL} { printf("%s Integer Constant \n", yytext); }
-{OCTAL}   { printf("%s Integer Constant \n", yytext); }
-{BINARY}  { printf("%s Integer Constant \n", yytext); }
-{ARRAYID} { printf("%s ARRAYID \n", yytext);}
-{INVALID_INT} { printf("%s Error: Invalid integer constant \n", yytext); }
-{INVALID_VAR} { printf("%s Error: Invalid identifier constant \n", yytext); }
-'([^\\'\n]|\\.)' { printf("%s CHARACTER CONSTANT\n", yytext); }
-\"([^\\\"\n]|\\.)*\" { printf("%s STRING CONSTANT \n", yytext); }
-[+\-*/%] { printf("%s Arithmetic operator\n", yytext); }
-[=<>]=? { printf("%s Relational operator\n", yytext); }
-[:=+\-*/%]= { printf("%s Assignment operator\n", yytext); }
-[(),;{}:] { printf("%s Separator\n", yytext); }
 
-\/\/.* {  }
-\/\*([^*]|\*+[^*/])*\*\/ {  }
-\n { line_number++; }
-[ \t]+ ;
-. { printf("%s LEXICAL ERROR: Unrecognized token\n", yytext); }
+"int"|"char"|"if"|"else"|"while"|"for"|"main"|"begin"|"end"|"print"|"scan"|"program"|"VarDecl"|"inc"|"dec"|"then"|"to"|"do" { 
+    printf("%s Keyword \n", yytext); 
+}
+
+\'([^\n\\']|(\\.))\'    { printf("%s CHARACTER CONSTANT\n", yytext); }
+
+{DECIMAL}|{OCTAL}|{BINARY}  { printf("%s Integer Constant \n", yytext); }
+
+[][(),;{}:]  { printf("%s Separator\n", yytext); }
+
+([+*\-/%])       { printf("%s Arithmetic operator\n", yytext); }
+(:=|\+=|-=|\*=|\/=|%=)  { printf("%s Assignment operator\n", yytext); }
+
+{FORCE_ARR} { printf("%s FORCE_ARR \n", yytext);}
+
+\"([^\"\n\\]|(\\.))*\" { printf("%s STRING CONSTANT \n", yytext); }
+
+{ID} { if (yyleng <= 15) printf("%s Identifier \n", yytext); }
+
+(<|>|=|<=|>=)    { printf("%s Relational operator\n", yytext); }
+
+{DARTH_VAR} { printf("%s Error: Invalid identifier constant \n", yytext); }
+
+\/\*([^*]|(\*+[^*/]))*\*\/   { /* Block comment */ }
+\/\/[^\n]*       { /* Line comment */ }
+
+{DARTH_INT} { printf("%s Error: Invalid integer constant \n", yytext); }
+
+[ \t]+   { /* Whitespace */ }
+\n       { line_number += 1; }
+
+.        { printf("%s LEXICAL ERROR: Unrecognized token\n", yytext); }
+
+
 
 %%
 int yywrap() {return 1;}
