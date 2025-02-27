@@ -2,6 +2,7 @@
 
 %{
 #include <stdio.h>
+#include <stdlib.h>  
 #include <string.h>
 #include <ctype.h>
 
@@ -16,32 +17,33 @@ Variable symbolTable[MAX_VARIABLES];
 int symbolCount = 0;
 int line_no = 1;
 
-int isKeyword(const char *word);
-int isValidIdentifier(const char *identifier);
-int isVariableDeclared(const char *name);
-void addVariable(const char *name, const char *type);
-void trimSpaces(char *str);
-int validateIntegerFormat(const char *value, int base);
+int symbolExists(const char *id_name);
+int reservedWord(const char *word);
+int NumValidator(const char *value, int radix);
+void storeSymbol(const char *num_str, const char *type_spec);
+int idValidator(const char *identifier);
+void whiteSpaceTrimmer(char *buffer);
+
+
 int flag = 0;
 %}
 
-lowercase_letter [a-z]
-uppercase_letter [A-Z]
+
+SpecialChars [+-%/<>*=_();,:{}]
+arithOp [-+*/%]
+Arr \([ ]*{identifier}[ ]*\[[ ]*{decimal}[ ]*\][ ]*,[ ]*(int|char)[ ]*\)[ ]*;?
+delim [\(\),;{}\"\@\:]
+lc [a-z]
 digit [0-9]
-special_symbols [+-%/<>*=_();,:{}]
-arithmetic_operators [-+*/%]
-separators [\(\),;{}\"\@\:]
 decimal [0-9]+
 binary [01]+
 octal [0-7]+
-/* integer_constant (\({decimal},10\) | \({binary},2\) | \({octal},8\)) */
-/* string_constant [a-zA-Z0-9+\-%/<>=_();,:{}]* */
-integer_constant  \({decimal},[ \t]*{decimal}\)
+intConstant  \({decimal},[ \t]*{decimal}\)
 string_constant \"([^\"\n])*\"
 keyword (int|char|if|else|while|for|main|begin|end|print|scan|program|VarDecl|inc|dec|do)
 identifier [a-z][a-z0-9]*(_[a-z0-9]+)?
 variable \([ ]*{identifier}[ ]*,[ ]*(int|char)[ ]*\)[ ]*;?
-array \([ ]*{identifier}[ ]*\[[ ]*{decimal}[ ]*\][ ]*,[ ]*(int|char)[ ]*\)[ ]*;?
+
 
 %x VARDECL
 %x STRING
@@ -80,21 +82,21 @@ array \([ ]*{identifier}[ ]*\[[ ]*{decimal}[ ]*\][ ]*,[ ]*(int|char)[ ]*\)[ ]*;?
         sscanf(ptr, "%[^,],%s", name, type);
 
         // Trim spaces from name and type
-        trimSpaces(name);
-        trimSpaces(type);
+        whiteSpaceTrimmer(name);
+        whiteSpaceTrimmer(type);
 
         // Remove trailing ) and possible ; from type
         char *paren = strchr(type, ')');
         if(paren) *paren = '\0';
 
-        if(isKeyword(name)){
+        if(reservedWord(name)){
             printf("Error (line no. %d): Keyword '%s' used as an identifier\n", line_no, name);
-        } else if(isVariableDeclared(name)){
+        } else if(symbolExists(name)){
             printf("Error (line no. %d): Duplicate variable '%s'\n",line_no, name);
-        } else if(!isValidIdentifier(name)){
+        } else if(!idValidator(name)){
             printf("Error (line no. %d): Invalid variable name '%s'\n",line_no, name);
         } else {
-            addVariable(name, type);
+            storeSymbol(name, type);
             printf("identifier: %s\n", name);
             printf("Variable: %s , type : %s\n", name, type);
         }
@@ -113,7 +115,7 @@ array \([ ]*{identifier}[ ]*\[[ ]*{decimal}[ ]*\][ ]*,[ ]*(int|char)[ ]*\)[ ]*;?
         printf("Error (line no. %d): Missing semicolon at the end of variable declaration\n", line_no);
     }
     
-    {array} {
+    {Arr} {
         char name[50], type[10];
         int size;
         char *ptr = yytext;
@@ -127,20 +129,20 @@ array \([ ]*{identifier}[ ]*\[[ ]*{decimal}[ ]*\][ ]*,[ ]*(int|char)[ ]*\)[ ]*;?
         ptr++;
         sscanf(ptr, "%[^[][%d],%s", name, &size, type);
 
-        trimSpaces(name);
-        trimSpaces(type);
+        whiteSpaceTrimmer(name);
+        whiteSpaceTrimmer(type);
 
         char *paren = strchr(type, ')');
         if(paren) *paren = '\0';
 
-        if(isKeyword(name)){
+        if(reservedWord(name)){
             printf("Error (line no. %d): Keyword '%s' used as variable\n", line_no, name);
-        } else if(isVariableDeclared(name)){
+        } else if(symbolExists(name)){
             printf("Error (line no. %d): Duplicate variable '%s'\n",line_no, name);
-        } else if(!isValidIdentifier(name)){
+        } else if(!idValidator(name)){
             printf("Error (line no. %d): Invalid variable name '%s'\n",line_no, name);
         } else {
-            addVariable(name, type);
+            storeSymbol(name, type);
             printf("array: %s , size:%d, type : %s\n", name, size, type);
         }
         
@@ -154,7 +156,7 @@ array \([ ]*{identifier}[ ]*\[[ ]*{decimal}[ ]*\][ ]*,[ ]*(int|char)[ ]*\)[ ]*;?
     [\t]+   ;
 }
 
-{integer_constant} {
+{intConstant} {
     char value[100], baseStr[10];
     int base, i, valid = 1;
     /* Use sscanf to extract the numeric value (as a string) and the base */
@@ -203,7 +205,7 @@ array \([ ]*{identifier}[ ]*\[[ ]*{decimal}[ ]*\][ ]*,[ ]*(int|char)[ ]*\)[ ]*;?
 {decimal} { printf("Decimal value: %s\n", yytext); }
 
 {identifier} {
-    if(!isVariableDeclared(yytext)){
+    if(!symbolExists(yytext)){
         printf("Error (line no. %d): Undeclared variable '%s := (10, 2);'\n", line_no, yytext);
     } else {
         printf("Identifier: %s\n", yytext);
@@ -211,7 +213,7 @@ array \([ ]*{identifier}[ ]*\[[ ]*{decimal}[ ]*\][ ]*,[ ]*(int|char)[ ]*\)[ ]*;?
 }
 
 \([ ]*{digit}+[ ]*,[ ]*2[ ]*\) {
-    if(!validateIntegerFormat(yytext, 2)){
+    if(!NumValidator(yytext, 2)){
         printf("Error (line no. %d): Invalid binary constant '%s'\n", line_no, yytext);
     } else {
         printf("Binary constant: %s\n", yytext);
@@ -219,7 +221,7 @@ array \([ ]*{identifier}[ ]*\[[ ]*{decimal}[ ]*\][ ]*,[ ]*(int|char)[ ]*\)[ ]*;?
 }
 
 \([ ]*{digit}+[ ]*,[ ]*8[ ]*\) {
-    if(!validateIntegerFormat(yytext, 8)){
+    if(!NumValidator(yytext, 8)){
         printf("Error (line no. %d): Invalid octal constant '%s'\n", line_no, yytext);
     } else {
         printf("Octal constant: %s\n", yytext);
@@ -227,7 +229,7 @@ array \([ ]*{identifier}[ ]*\[[ ]*{decimal}[ ]*\][ ]*,[ ]*(int|char)[ ]*\)[ ]*;?
 }
 
 \([ ]*{digit}+[ ]*,[ ]*10[ ]*\) {
-    if(!validateIntegerFormat(yytext, 10)){
+    if(!NumValidator(yytext, 10)){
         printf("Error (line no. %d): Invalid decimal constant '%s'\n", line_no, yytext);
     } else {
         printf("Decimal constant: %s\n", yytext);
@@ -247,10 +249,10 @@ array \([ ]*{identifier}[ ]*\[[ ]*{decimal}[ ]*\][ ]*,[ ]*(int|char)[ ]*\)[ ]*;?
     [\t]+   ;
 }
 
-{arithmetic_operators} { printf("Arithmetic operator: %s\n", yytext); }
+{arithOp} { printf("Arithmetic operator: %s\n", yytext); }
 ">"|"<"|">="|"<="|"="|"<>" { printf("Relational operator: %s\n", yytext); }
 "-="|":="|"+="|"*="|"/="|"%=" { printf("Assignment operator: %s\n", yytext); } 
-{separators} { printf("Separator: %s\n", yytext); }
+{delim} { printf("Separator: %s\n", yytext); }
 
 \/\/.*   { printf("Single-line comment: %s\n", yytext); }
 \/\*[^*]*\*+([^/*][^*]*\*+)*\/ { printf("Multi-line comment: %s\n", yytext); }
@@ -308,8 +310,8 @@ print\([ \t]*{string_constant}(([ \t]*,[ \t]*[^)]*)*)\)[ \t]*; {
             while(*tok == ' ' || *tok == '\t') tok++;
             if(strlen(tok) > 0) {
                 /* Check if token is a valid identifier and declared */
-                if(isValidIdentifier(tok)) {
-                    if(!isVariableDeclared(tok)){
+                if(idValidator(tok)) {
+                    if(!symbolExists(tok)){
                         printf("Error (line %d): Undeclared variable '%s' in print statement\n", line_no, tok);
                         errorFound = 1;
                     }
@@ -376,8 +378,8 @@ scan\([ \t]*{string_constant}(([ \t]*,[ \t]*[^)]*)*)\)[ \t]*; {
             while(*tok == ' ' || *tok == '\t') tok++;
             if(strlen(tok) > 0) {
                 /* For scan, each token must be an identifier that is already declared */
-                if(isValidIdentifier(tok)) {
-                    if(!isVariableDeclared(tok)) {
+                if(idValidator(tok)) {
+                    if(!symbolExists(tok)) {
                         printf("Error (line %d): Undeclared variable '%s' in scan statement\n", line_no, tok);
                         errorFound = 1;
                     }
@@ -400,16 +402,16 @@ scan\([ \t]*{string_constant}(([ \t]*,[ \t]*[^)]*)*)\)[ \t]*; {
 
 <CONDITIONAL>{
     {identifier} {
-        if(!isVariableDeclared(yytext)){
+        if(!symbolExists(yytext)){
             printf("Error (line no. %d): Undeclared variable '%s'\n", line_no, yytext);
         } else {
             printf("Identifier: %s\n", yytext);
         }
     }
-    {arithmetic_operators} { printf("Arithmetic operator: %s\n", yytext); }
+    {arithOp} { printf("Arithmetic operator: %s\n", yytext); }
     ">"|"<"|">="|"<="|"="|"<>" { printf("Relational operator: %s\n", yytext); }
     "-="|":="|"+="|"*="|"/="|"%=" { printf("Assignment operator: %s\n", yytext); } 
-    {separators} { printf("Separator: %s\n", yytext); }
+    {delim} { printf("Separator: %s\n", yytext); }
     'then' { printf(" executable statements if the condition is true: \n"); }
     \n  ;
     'else' { printf(" executable statements if the condition is false: \n"); }
@@ -422,7 +424,7 @@ scan\([ \t]*{string_constant}(([ \t]*,[ \t]*[^)]*)*)\)[ \t]*; {
 %%
 
 // Refactored
-int isKeyword(const char *word) {
+int reservedWord(const char *word) {
     const char* keywords[] = {"VarDecl", "program", "begin", "end", "char", 
                              "int", "if", "else", "while", "for", "main", 
                              "print", "scan", "inc", "dec", "do"};
@@ -439,7 +441,7 @@ int isKeyword(const char *word) {
 }
 
 
-int validateIntegerFormat(const char *inputStr, int radix) {
+int NumValidator(const char *inputStr, int radix) {
     const char *ptr = inputStr;
     const char *ignore_chars = " \t(),";
     
@@ -473,7 +475,7 @@ int validateIntegerFormat(const char *inputStr, int radix) {
 }
 
 
-void trimSpaces(char *text) {
+void whiteSpaceTrimmer(char *text) {
     char *front = text;
     char *back = text + strlen(text);
     const char *whitespace = " \t";
@@ -503,7 +505,7 @@ void trimSpaces(char *text) {
 }
 
 
-int isValidIdentifier(const char *identifier) {
+int idValidator(const char *identifier) {
     int us = 0;  // Underscore counter
     int i = 0;
     
@@ -548,7 +550,7 @@ int isValidIdentifier(const char *identifier) {
 // done changes 9:40 pm
 
 
-int isVariableDeclared(const char *name) {
+int symbolExists(const char *name) {
     int index = 0;
     int foundFlag = 0;  // Unnecessary flag variable
     
@@ -575,7 +577,7 @@ int isVariableDeclared(const char *name) {
 }
 
 
-void addVariable(const char *name, const char *type) {
+void storeSymbol(const char *name, const char *type) {
     int currentPosition = symbolCount; // Redundant temp variable
     int nameLength = 0;
     int typeLength = 0;
