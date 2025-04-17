@@ -56,7 +56,8 @@ void print_ast(ASTNode* node, int depth) {
     if (!node) return;
 
     // Print opening parenthesis
-    printf("(");
+    if(node->data.compound.num_children != 0)
+        printf("(");
 
     // Print node content based on type
     switch (node->type) {
@@ -122,7 +123,8 @@ void print_ast(ASTNode* node, int depth) {
     }
 
     // Print closing parenthesis
-    printf(")");
+    if(node->data.compound.num_children != 0)
+        printf(")");
 }
 
 void free_ast(ASTNode* node) {
