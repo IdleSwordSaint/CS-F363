@@ -1,7 +1,9 @@
-all:
+all: a.out
+
+a.out: mylex.l myparser.y
+	bison -d myparser.y
 	flex mylex.l
-	bison -d myparser_ast.y
-	gcc -o a.out lex.yy.c myparser_ast.tab.c
+	gcc -o a.out myparser.tab.c lex.yy.c -lfl
 
 clean:
-	rm -f lex.yy.c myparser_ast.tab.c myparser_ast.tab.h a.out
+	rm -f a.out myparser.tab.c myparser.tab.h lex.yy.c
