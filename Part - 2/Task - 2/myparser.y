@@ -57,7 +57,7 @@ int check_variable(const char* name) {
 %}
 
 %code requires {
-    #include "ast.h"
+    #include "ast.h"  // ✅ Ensures ASTNode is known in parser.tab.h
 }
 
 %union {
@@ -107,8 +107,8 @@ condition
         $$->operator = $2;
         add_child($$, $1);
         ASTNode* num = create_node(NODE_INT_CONST);
-        num->data.int_value = $3;
-        num->data.base = 10;
+        num->data.int_const.int_value = $3;
+        num->data.int_const.base = 10;
         add_child($$, num);
     }
     | expression {
@@ -294,11 +294,10 @@ for_loop
         add_child(assign, id);
         add_child(assign, $4);
         add_child($$, assign);
-        ASTNode* to = $6; // End expression
+        add_child($$, $6);
         ASTNode* dec = create_node(NODE_BINARY_OP);
         dec->operator = strdup("dec");
         add_child(dec, $8);
-        add_child($$, to);
         add_child($$, dec);
         add_child($$, $10);
     }
@@ -424,7 +423,7 @@ VarDecList
 
 VarDeclaration
     : OB IDENTIFIER arrayDec COMMA type CB SEMICOLON {
-        add_symbol($2, $5->data.string_value, $3 != NULL, $3 ? $3->data.int_value : 0);
+        add_symbol($2, $5->data.string_value, $3 != NULL, $3 ? $3->data.int_const.int_value : 0);
         $$ = create_node(NODE_VARDECL);
         ASTNode* id = create_node(NODE_IDENTIFIER);
         id->data.string_value = $2;
@@ -438,8 +437,9 @@ arrayDec
     : /* empty */ { $$ = NULL; }
     | LBRACKET DECIMAL RBRACKET {
         $$ = create_node(NODE_INT_CONST);
-        $$->data.int_value = $2;
-        $$->data.base = 10;
+        $$->data.int_const.int_value = $2;
+        $$->data.int_const.base = 10;
+        printf("DEBUG: arrayDec value=%d, base=%d at line %d\n", $2, 10, yylineno);
     }
     ;
 
@@ -467,8 +467,8 @@ integerConst
             exit(1);
         }
         $$ = create_node(NODE_INT_CONST);
-        $$->data.int_value = $2;
-        $$->data.base = $4;
+        $$->data.int_const.int_value = $2;
+        $$->data.int_const.base = $4;
     }
     ;
 
@@ -491,7 +491,6 @@ int main(int argc, char *argv[]) {
         if (ast_root) {
             print_ast(ast_root, 0);
             printf("\n");
-            // free_ast(ast_root);
         }
     }
 
