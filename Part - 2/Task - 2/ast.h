@@ -25,14 +25,16 @@ typedef struct ASTNode {
     NodeType type;
     char* operator; // For nodes with operators, like NODE_BINARY_OP, NODE_ASSIGN, NODE_RELOP
     union {
-        int int_value;     // For integer constants
         char char_value;   // For character constants
         char* string_value; // For identifiers, strings, types
         struct {
             struct ASTNode** children;
             int num_children;
         } compound;
-        int base;          // For integer constant base
+        struct {
+            int int_value; // For integer constant value
+            int base;      // For integer constant base
+        } int_const;
     } data;
 } ASTNode;
 
