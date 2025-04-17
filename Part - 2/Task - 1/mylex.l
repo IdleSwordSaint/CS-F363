@@ -1,9 +1,7 @@
 %{
 #include "myparser.tab.h"
-#include "ast.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 extern int yylineno;
 %}
 
@@ -23,8 +21,8 @@ extern int yylineno;
 "dec"    { return DEC; }
 "do"     { return DO; }
 "VarDecl" { return VARDECL; }
-"int"    { yylval.string = strdup("int"); return INT_TYPE; }
-"char"   { yylval.string = strdup("char"); return CHAR_TYPE; }
+"int"    { return INT_TYPE; }
+"char"   { return CHAR_TYPE; }
 ":="     { return ASSIGN; }
 "+="     { return PLUSEQ; }
 "-="     { return MINUSEQ; }
@@ -42,44 +40,24 @@ extern int yylineno;
 "\""     { return DQUOTE; }
 "@"      { return AT; }
 
-[a-z][a-z0-9_]* {
-    if (strchr(yytext, '_') && strchr(strchr(yytext, '_') + 1, '_')) {
-        printf("Invalid identifier: %s at line %d (multiple underscores)\n", yytext, yylineno);
-        exit(1);
-    }
-    yylval.string = strdup(yytext);
-    return IDENTIFIER;
-}
+[a-z][a-z0-9_]* { return IDENTIFIER; }
 
-[0-9]+  {
-    yylval.int_val = atoi(yytext);
-    return DECIMAL;
-}
-
-\"[^\"]*\" {
-    yylval.string = strdup(yytext);
-    return STRING_LITERAL;
-}
-
-'[^']' {
-    yylval.char_val = yytext[1];
-    return CHAR_LITERAL;
-}
-
-"+"     { yylval.string = strdup("+"); return ADD; }
-"-"     { yylval.string = strdup("-"); return SUB; }
-"*"     { yylval.string = strdup("*"); return MUL; }
-"/"     { yylval.string = strdup("/"); return DIV; }
-"%"     { yylval.string = strdup("%"); return MOD; }
+[0-9]+  { return DECIMAL; }
+\"[^\"]*\" { return STRING_LITERAL; }
+'[^']' { return CHAR_LITERAL; }
+"+"     { return ADD; }
+"-"     { return SUB; }
+"*"     { return MUL; }
+"/"     { return DIV; }
+"%"     { return MOD; }
 "("     { return OB; }
 ")"     { return CB; }
-"="     { yylval.string = strdup("="); return EQ; }
-">"     { yylval.string = strdup(">"); return GT; }
-"<"     { yylval.string = strdup("<"); return LT; }
-">="    { yylval.string = strdup(">="); return GE; }
-"<="    { yylval.string = strdup("<="); return LE; }
-"<>"    { yylval.string = strdup("<>"); return NE; }
-
+"="     { return EQ; }
+">"     { return GT; }
+"<"     { return LT; }
+">="    { return GE; }
+"<="    { return LE; }
+"<>"    { return NE; }
 [ \t]   { /* Ignore whitespace */ }
 \n      { yylineno++; }
 .       { printf("Unexpected character: %s at line %d\n", yytext, yylineno); exit(1); }
