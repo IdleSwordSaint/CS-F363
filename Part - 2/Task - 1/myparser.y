@@ -78,8 +78,8 @@ block
         ;
 
 if_cond 
-        : IF OB condition CB block
-        | IF OB condition CB block ELSE block
+        : IF OB condition CB block SEMICOLON
+        | IF OB condition CB block ELSE block SEMICOLON
         ;
 
 while_loop 
