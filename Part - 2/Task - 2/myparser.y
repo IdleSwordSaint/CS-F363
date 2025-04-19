@@ -239,12 +239,12 @@ block
     ;
 
 if_cond
-    : IF OB condition CB block {
+    : IF OB condition CB block SEMICOLON{
         $$ = create_node(NODE_IF);
         add_child($$, $3);
         add_child($$, $5);
     }
-    | IF OB condition CB block ELSE block {
+    | IF OB condition CB block ELSE block SEMICOLON{
         $$ = create_node(NODE_IF);
         add_child($$, $3);
         add_child($$, $5);
