@@ -56,7 +56,7 @@ void print_ast(ASTNode* node, int depth) {
     if (!node) return;
 
     // Print opening parenthesis
-    if(node->data.compound.num_children != 0)
+    if(node->data.compound.num_children > 1)
         printf("(");
 
     // Print node content based on type
@@ -98,7 +98,7 @@ void print_ast(ASTNode* node, int depth) {
             printf("'%c'", node->data.char_value);
             break;
         case NODE_STRING_CONST:
-            printf("\"%s\"", node->data.string_value);
+            printf("%s", node->data.string_value);
             break;
         case NODE_IDENTIFIER:
             printf("%s", node->data.string_value);
@@ -123,7 +123,7 @@ void print_ast(ASTNode* node, int depth) {
     }
 
     // Print closing parenthesis
-    if(node->data.compound.num_children != 0)
+    if(node->data.compound.num_children > 1)
         printf(")");
 }
 
