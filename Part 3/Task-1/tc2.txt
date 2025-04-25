@@ -1,0 +1,72 @@
+Input: 
+
+begin program:
+begin VarDecl:
+(number, int);
+(sum, int);
+(a, int);
+(b, int);
+(arr[6], char);
+end VarDecl
+
+number := (3, 10);
+sum := (0, 10);
+
+while (number > (0, 10)) do
+begin
+    sum := sum + number;
+    number := number - (1, 10);
+end;
+
+b := (20, 10);
+
+for a := (10, 8) to b + (10, 2) inc (1, 10) do
+begin
+    a := a + (1, 2) * a;
+    b := b + a + (1, 2); 
+end;
+
+end program
+
+
+Output: 
+
+
+number := (3, 10)        
+sum := (0, 10)           
+
+L1:
+  t_cond1 := number > (0, 10)  
+  if t_cond1 := 0 goto L2
+  t1 := sum + number           
+  sum := t1
+  t2 := number - (1, 10)       
+  number := t2
+  goto L1
+L2:
+
+b := (20, 10)            
+a := (10, 8)             
+
+L3:
+
+t3 := b + (10, 2)       
+t4 := (1, 10)           
+
+  t_cond2 := a > t3
+  if t_cond2 == 1 goto L4
+
+  
+  t5 := (1, 2) * a       
+  t6 := a + t5           
+  a := t6
+
+  t7 := b + a
+  t8 := t7 + (1, 2)      
+  b := t8
+
+  t9 := a + t4           
+  a := t9
+
+  goto L3
+L4:

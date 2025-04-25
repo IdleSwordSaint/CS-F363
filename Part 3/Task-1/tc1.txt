@@ -1,0 +1,33 @@
+Input: 
+begin program:
+begin VarDecl:
+(i, int);
+end VarDecl
+
+i := (5, 10);
+
+if (i > (10, 10))
+begin
+    i := i + (0, 10);
+    i := i + i;
+end
+else
+begin
+    i := (20, 10);
+end;
+end program
+
+
+Output: 
+
+i := (5, 10)            
+t1 := i > (10, 10)     
+if t1 == 0 goto L1
+t2 := i + (0, 10)       
+i := t2
+t3 := i + i             
+i := t3
+goto L2
+L1:
+i := (20, 10)           
+L2:
