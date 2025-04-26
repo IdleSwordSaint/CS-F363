@@ -1,10 +1,10 @@
 %{
-#include "parser.tab.h"
+#include "myparser.tab.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <errno.h>
+
 
 extern int yylineno;
 
@@ -18,77 +18,21 @@ char* create_string(char* text) {
     return str;
 }
 
-// Convert integer from its base representation to decimal
-int convert_to_decimal(char* value_str, int base) {
-    int result = 0;
-    int len = strlen(value_str);
-    
-    for (int i = 0; i < len; ++i) {
-        int digit = value_str[i] - '0';
-        if (digit >= base) {
-            fprintf(stderr, "Invalid digit '%c' for base %d\n", value_str[i], base);
-            exit(1);
-        }
-        result = result * base + digit;
-    }
-    
-    return result;
-}
+// Validate (value, base) integer format
+int validate_integer(char* value_str, char* base_str) {
+    int base = atoi(base_str);
+    if (base != 2 && base != 8 && base != 10)
+        return 0;
 
-// Process (value, base) integer format
-char* process_integer_constant(char* text) {
-    // Make a copy of the input
-    char* copy = strdup(text);
-    // Extract value and base
-    char* value_start = copy + 1;  // Skip '('
-    char* comma = strchr(value_start, ',');
-    if (!comma) {
-        fprintf(stderr, "Invalid integer constant format: %s\n", text);
-        free(copy);
-        exit(1);
-    }
-    
-    *comma = '\0';  // Null-terminate value string
-    char* value_str = value_start;
-    
-    // Skip whitespace after comma
-    char* base_start = comma + 1;
-    while (*base_start == ' ' || *base_start == '\t') base_start++;
-    
-    // Remove closing parenthesis
-    char* paren = strchr(base_start, ')');
-    if (paren) *paren = '\0';
-    
-    // Convert base to integer
-    int base = atoi(base_start);
-    if (base != 2 && base != 8 && base != 10) {
-        fprintf(stderr, "Invalid base %d in integer constant: %s\n", base, text);
-        free(copy);
-        exit(1);
-    }
-    
-    // Validate digits for the given base
-    for (int i = 0; i < strlen(value_str); ++i) {
+    int len = strlen(value_str);
+    for (int i = 0; i < len; ++i) {
         char c = value_str[i];
-        if (!isdigit(c)) {
-            fprintf(stderr, "Invalid character '%c' in integer constant: %s\n", c, text);
-            free(copy);
-            exit(1);
-        }
-        if ((base == 2 && c > '1') || (base == 8 && c > '7')) {
-            fprintf(stderr, "Digit '%c' is out of range for base %d in: %s\n", c, base, text);
-            free(copy);
-            exit(1);
-        }
+        if (!isdigit(c)) return 0;
+        if ((base == 2 && c > '1') ||
+            (base == 8 && c > '7'))
+            return 0;
     }
-    
-    // Convert to decimal string representation
-    int decimal_value = convert_to_decimal(value_str, base);
-    char* result = malloc(20);  // Enough for any 32-bit integer
-    sprintf(result, "%d", decimal_value);
-    
-    free(copy);
-    return result;
+    return 1;
 }
 %}
 
@@ -110,7 +54,6 @@ char* process_integer_constant(char* text) {
 "VarDecl"  { return VARDECL; }
 "int"      { return INT_TYPE; }
 "char"     { return CHAR_TYPE; }
-"main"     { return MAIN; }
 
 ":="       { return ASSIGN; }
 "+="       { return PLUSEQ; }
@@ -123,11 +66,10 @@ char* process_integer_constant(char* text) {
 "or"       { return OR; }
 "not"      { return NOT; }
 
-"//".*     { /* Single line comment */ }
+"//".*     { yylineno++; return SLCOMMENT; }
 "/*"([^*]|\*+[^/*])*\*+"/" { 
-    /* Multi-line comment */
-    for (char *s = yytext; *s; ++s) 
-        if (*s == '\n') yylineno++;
+    for (char *s = yytext; *s; ++s) if (*s == '\n') yylineno++;
+    return MLCOMMENT; 
 }
 
 ":"        { return COLON; }
@@ -154,7 +96,8 @@ char* process_integer_constant(char* text) {
 "<>"       { return NE; }
 
 \"[^\"]*\" {
-    yylval.sval = create_string(yytext);
+    yytext[strlen(yytext) - 1] = '\0';
+    yylval.sval = create_string(yytext + 1);  // remove quotes
     return STRING_LITERAL;
 }
 
@@ -174,18 +117,33 @@ char* process_integer_constant(char* text) {
 }
 
 [0-9]+ {
-    yylval.sval = create_string(yytext);
-    return INTEGER_CONST;
+    yylval.ival = atoi(yytext);
+    return DECIMAL;
 }
 
 \([0-9]+,[ ]*(2|8|10)\) {
-    yylval.sval = process_integer_constant(yytext);
+    char* copy = strdup(yytext);
+    char* inner = copy + 1;              // skip '('
+    char* comma = strchr(inner, ',');
+    *comma = '\0';                       // null-terminate value
+    char* value_str = inner;
+    char* base_str = comma + 1;
+    base_str[strcspn(base_str, ")")] = '\0';  // remove closing ')'
+
+    if (!validate_integer(value_str, base_str)) {
+        fprintf(stderr, "Lexical error at line %d: Invalid integer constant format %s\n", yylineno, yytext);
+        free(copy);
+        exit(1);
+    }
+
+    yylval.sval = create_string(yytext);
+    free(copy);
     return INTEGER_CONST;
 }
 
 [ \t\r]+   { /* Ignore whitespace */ }
 \n         { yylineno++; }
-.          { printf("Unexpected character: %s at line %d\n", yytext, yylineno); }
+.          { printf("Unexpected character: %s at line %d\n", yytext, yylineno); exit(1); }
 
 %%
 
