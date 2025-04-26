@@ -531,7 +531,7 @@ int yy_flex_debug = 0;
 char *yytext;
 #line 1 "mylex.l"
 #line 2 "mylex.l"
-#include "t2.tab.h"
+#include "parser.tab.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
