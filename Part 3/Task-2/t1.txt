@@ -13,5 +13,5 @@ end
 else
 begin
     i := (20, 10);
-end
+end;
 end program

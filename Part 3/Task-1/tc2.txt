@@ -1,4 +1,4 @@
-Input: 
+
 
 begin program:
 begin VarDecl:

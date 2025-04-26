@@ -1,5 +1,5 @@
 
-#line 2 "lex.yy.c"
+#line 3 "lex.yy.c"
 
 #define  YY_INT_ALIGNED short int
 
@@ -622,8 +622,8 @@ char* process_integer_constant(char* text) {
     free(copy);
     return result;
 }
-#line 625 "lex.yy.c"
 #line 626 "lex.yy.c"
+#line 627 "lex.yy.c"
 
 #define INITIAL 0
 
@@ -843,7 +843,7 @@ YY_DECL
 #line 95 "mylex.l"
 
 
-#line 846 "lex.yy.c"
+#line 847 "lex.yy.c"
 
 	while ( /*CONSTCOND*/1 )		/* loops until end-of-file is reached */
 		{
@@ -1221,7 +1221,7 @@ YY_RULE_SETUP
 #line 190 "mylex.l"
 ECHO;
 	YY_BREAK
-#line 1224 "lex.yy.c"
+#line 1225 "lex.yy.c"
 case YY_STATE_EOF(INITIAL):
 	yyterminate();
 
