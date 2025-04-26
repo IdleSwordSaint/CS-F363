@@ -376,12 +376,8 @@ int process_assignment(char* var, char* op, char* expr) {
 %%
 
 program
-    : BEGIN_TOKEN PROGRAM COLON varDecBlock {
-        // After variable declarations, switch to simulation mode
-        printf("\n--- Switching to execution simulation mode ---\n\n");
-        emit_tac = 0;
-    } statementBlock END_TOKEN PROGRAM {
-        printf("\nProgram execution completed successfully.\n");
+    : BEGIN_TOKEN PROGRAM COLON varDecBlock statementBlock END_TOKEN PROGRAM {
+        printf("\nProgram parsing and TAC generation completed successfully.\n");
         print_symbol_table();
     }
     | BEGIN_TOKEN PROGRAM COLON varDecBlock statementBlock error {
@@ -418,7 +414,11 @@ assignment
             $$.code = strdup($1); track_allocation($$.code);
         } else {
             // Simulation mode
-            process_assignment($1, $2.code, $3.code);
+            int idx = get_var_index($1);
+            if (idx >= 0) {
+                process_assignment($1, $2.code, $3.code);
+                printf("Simulation: %s %s %s = %d\n", $1, $2.code, $3.code, var_values[idx]);
+            }
             $$.code = strdup($1); track_allocation($$.code);
         }
     }
@@ -535,56 +535,30 @@ for_stmt
     }
     ;
 
+// Replace the entire if_cond rule with this simpler version
 if_cond
-    : IF OB bool_expr CB {
-        if (emit_tac) {
-            __if_false = newLabel();
-            __if_end = newLabel();
-            emitCondJump($3.code, __if_false);
-        } else {
-            // Simulation mode
-            // If condition is true, execute the "then" block
-            // Skip the "else" block
-            if ($3.value == 0) {
-                // Condition is false, we'll need to skip the next block
-                // and execute the else block (handled by parser)
-            }
-        }
-    } block {
-        if (emit_tac) {
-            emitGoto(__if_end);
-            emitLabel(__if_false);
-        } else {
-            // Simulation: block already executed if condition was true
-        }
-    } ELSE block {
-        if (emit_tac) {
-            emitLabel(__if_end);
-        } else {
-            // Simulation: blocks already executed based on condition
-        }
+    : IF OB bool_expr CB block ELSE block {
+        __if_false = newLabel();
+        __if_end = newLabel();
+        emitCondJump($3.code, __if_false);
+        
+        // The true block has already been parsed, so emit the jump to skip else
+        emitGoto(__if_end);
+        emitLabel(__if_false);
+        
+        // After the else block
+        emitLabel(__if_end);
     }
-    | IF OB bool_expr CB DO {   // Keep this alternative for backward compatibility
-        if (emit_tac) {
-            __if_false = newLabel();
-            __if_end = newLabel();
-            emitCondJump($3.code, __if_false);
-        } else {
-            // Same simulation behavior
-        }
-    } block {
-        if (emit_tac) {
-            emitGoto(__if_end);
-            emitLabel(__if_false);
-        } else {
-            // Simulation: block already executed if condition was true
-        }
-    } ELSE block {
-        if (emit_tac) {
-            emitLabel(__if_end);
-        } else {
-            // Simulation: blocks already executed based on condition
-        }
+    | IF OB bool_expr CB DO block ELSE block {
+        // Keep this for backward compatibility
+        __if_false = newLabel();
+        __if_end = newLabel();
+        emitCondJump($3.code, __if_false);
+        
+        emitGoto(__if_end);
+        emitLabel(__if_false);
+        
+        emitLabel(__if_end);
     }
     ;
 
@@ -688,12 +662,11 @@ factor
     | OB INTEGER_CONST COMMA INTEGER_CONST CB {
         // Handle (x, y) format for integer constants
         if (emit_tac) {
-            char* temp = newTemp();
-            emit(temp, $4, NULL, NULL); // Use the second value
-            $$.code = temp;
+            $$.code = strdup($2); // Use the first value for TAC
+            track_allocation($$.code);
         } else {
             // Simulation mode - use the second value
-            $$.value = atoi($4);
+            $$.value = atoi($2); // We'll use the first value for simulation too
             char temp[20];
             sprintf(temp, "%d", $$.value);
             $$.code = strdup(temp);
@@ -704,7 +677,17 @@ factor
         $$.code = strdup($1); 
         track_allocation($$.code);
         if (!emit_tac) {
-            $$.value = get_variable_value($1);
+            if (is_declared($1)) {
+                int idx = get_var_index($1);
+                if (var_initialized[idx]) {
+                    $$.value = var_values[idx];
+                } else {
+                    $$.value = 0; // Default value for uninitialized
+                    printf("Warning: Using uninitialized variable '%s'\n", $1);
+                }
+            } else {
+                $$.value = 0; // Default value
+            }
         }
     }
     | INTEGER_CONST {
@@ -1002,8 +985,10 @@ int main(int argc, char** argv) {
     allocated_memory = NULL;
     allocated_count = 0;
     
-    // Parse and execute the program
-    yyparse();
+    // Parse the program
+    if (yyparse() == 0) {
+        printf("\nParsing completed successfully.\n");
+    }
     
     // Clean up
     cleanup_memory();
