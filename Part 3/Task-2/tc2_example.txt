@@ -1,0 +1,28 @@
+begin program:
+
+begin VarDecl:
+  (number, int);
+  (a, int);
+  (b, int);
+end VarDecl
+
+number := (10, 10);
+
+while (number > 0) do
+  begin
+    print("Current number: %d", number);
+    number -= (1, 10);
+  end;
+
+b := (20, 10);
+a := (10, 8);
+
+for a := (10, 8) to (20, 10) inc (1, 2) do
+  begin
+    a := a + (1, 2);
+    b := b + a;
+  end;
+
+print("Final a: %d, b: %d", a, b);
+
+end program

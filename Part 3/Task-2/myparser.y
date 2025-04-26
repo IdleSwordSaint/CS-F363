@@ -378,6 +378,7 @@ int process_assignment(char* var, char* op, char* expr) {
 program
     : BEGIN_TOKEN PROGRAM COLON varDecBlock {
         // After variable declarations, switch to simulation mode
+        printf("\n--- Switching to execution simulation mode ---\n\n");
         emit_tac = 0;
     } statementBlock END_TOKEN PROGRAM {
         printf("\nProgram execution completed successfully.\n");
@@ -541,8 +542,35 @@ if_cond
             __if_end = newLabel();
             emitCondJump($3.code, __if_false);
         } else {
-            // If condition is true (1), the following block will be executed
-            // by the parser
+            // Simulation mode
+            // If condition is true, execute the "then" block
+            // Skip the "else" block
+            if ($3.value == 0) {
+                // Condition is false, we'll need to skip the next block
+                // and execute the else block (handled by parser)
+            }
+        }
+    } block {
+        if (emit_tac) {
+            emitGoto(__if_end);
+            emitLabel(__if_false);
+        } else {
+            // Simulation: block already executed if condition was true
+        }
+    } ELSE block {
+        if (emit_tac) {
+            emitLabel(__if_end);
+        } else {
+            // Simulation: blocks already executed based on condition
+        }
+    }
+    | IF OB bool_expr CB DO {   // Keep this alternative for backward compatibility
+        if (emit_tac) {
+            __if_false = newLabel();
+            __if_end = newLabel();
+            emitCondJump($3.code, __if_false);
+        } else {
+            // Same simulation behavior
         }
     } block {
         if (emit_tac) {
