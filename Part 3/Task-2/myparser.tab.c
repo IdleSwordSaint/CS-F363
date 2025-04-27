@@ -382,12 +382,17 @@ int parse_integer_const(const char* str) {
     int value = atoi(copy);
     int base = atoi(comma + 1);
     
-    // Convert from the given base to decimal
+    // Convert from the given base to decimal (only relevant for base 2 and 8)
     if (base == 2 || base == 8) {
         int decimal_value = 0;
         int digit_value;
         for (int i = 0; copy[i] != '\0'; i++) {
             digit_value = copy[i] - '0';
+            if ((base == 2 && digit_value > 1) || 
+                (base == 8 && digit_value > 7)) {
+                fprintf(stderr, "Semantic error: Invalid digit for base %d\n", base);
+                exit(1);
+            }
             decimal_value = decimal_value * base + digit_value;
         }
         value = decimal_value;
@@ -494,9 +499,21 @@ int perform_op(int left, const char* op, int right) {
     return 0;
 }
 
-// Execute a single instruction
+// Add a debug flag to help with debugging
+int debug_simulation = 1;  // Set to 1 to enable debug messages during simulation
+
+// Modify execute_instruction to add debug information
 int execute_instruction(int idx) {
     Instruction* instr = &instructions[idx];
+    
+    if (debug_simulation) {
+        printf("DEBUG: Executing instruction %d\n", idx);
+        if (instr->is_label) printf("DEBUG: Label: %s\n", instr->label);
+        else if (instr->is_goto) printf("DEBUG: Goto: %s\n", instr->label);
+        else if (instr->is_cond_jump) printf("DEBUG: Cond jump: %s to %s\n", instr->condition, instr->label);
+        else if (instr->is_print) printf("DEBUG: Print: %s\n", instr->arg1);
+        else if (instr->result) printf("DEBUG: Assignment: %s\n", instr->result);
+    }
     
     // Handle label (no action needed, just for jumps)
     if (instr->is_label) return idx + 1;
@@ -649,10 +666,23 @@ int execute_instruction(int idx) {
 void execute_program() {
     printf("\n=== Program Output ===\n");
     
+    // Check if we have any instructions to execute
+    if (instruction_count == 0) {
+        printf("Warning: No instructions to execute\n");
+        return;
+    }
+    
+    // Print number of instructions for debugging
+    if (debug_simulation) {
+        printf("DEBUG: Executing %d instructions\n", instruction_count);
+    }
+    
     int pc = 0;  // Program counter
     while (pc < instruction_count) {
         pc = execute_instruction(pc);
     }
+    
+    printf("\n=== End of Program Output ===\n");
 }
 
 // Print symbol table
@@ -692,7 +722,7 @@ void print_symbol_table() {
     }
 }
 
-#line 696 "myparser.tab.c"
+#line 726 "myparser.tab.c"
 
 # ifndef YY_CAST
 #  ifdef __cplusplus
@@ -1203,14 +1233,14 @@ static const yytype_int8 yytranslate[] =
 /* YYRLINE[YYN] -- Source line where rule number YYN was defined.  */
 static const yytype_int16 yyrline[] =
 {
-       0,   665,   665,   668,   674,   675,   679,   680,   681,   682,
-     683,   684,   685,   686,   689,   703,   704,   705,   706,   707,
-     708,   715,   714,   739,   737,   790,   797,   789,   814,   815,
-     819,   826,   827,   831,   835,   842,   843,   844,   845,   849,
-     859,   860,   864,   868,   875,   887,   888,   889,   890,   891,
-     892,   896,   901,   902,   906,   915,   927,   935,   936,   940,
-     943,   952,   953,   954,   960,   964,   965,   969,  1007,  1008,
-    1012,  1013
+       0,   695,   695,   698,   704,   705,   709,   710,   711,   712,
+     713,   714,   715,   716,   719,   733,   734,   735,   736,   737,
+     738,   745,   744,   769,   767,   832,   839,   831,   856,   857,
+     861,   868,   869,   873,   877,   884,   885,   886,   887,   891,
+     901,   902,   906,   910,   917,   929,   930,   931,   932,   933,
+     934,   938,   943,   944,   948,   957,   969,   977,   978,   982,
+     985,   994,   995,   996,  1002,  1006,  1007,  1011,  1049,  1050,
+    1054,  1055
 };
 #endif
 
@@ -1867,24 +1897,24 @@ yyreduce:
   switch (yyn)
     {
   case 2: /* program: BEGIN_TOKEN PROGRAM COLON varDecBlock statementBlock END_TOKEN PROGRAM  */
-#line 665 "myparser.y"
+#line 695 "myparser.y"
                                                                              {
         printf("Parsing and TAC generation completed successfully.\n");
     }
-#line 1875 "myparser.tab.c"
+#line 1905 "myparser.tab.c"
     break;
 
   case 3: /* program: BEGIN_TOKEN PROGRAM COLON varDecBlock statementBlock error  */
-#line 668 "myparser.y"
+#line 698 "myparser.y"
                                                                  {
         printf("Warning: Syntax error near the end of the program. TAC generation may be incomplete.\n");
         yyerrok;
     }
-#line 1884 "myparser.tab.c"
+#line 1914 "myparser.tab.c"
     break;
 
   case 14: /* assignment: identifier assignment_op expression  */
-#line 689 "myparser.y"
+#line 719 "myparser.y"
                                           {
         if (strcmp((yyvsp[-1].sval), ":=") == 0) {
             emit((yyvsp[-2].sval), (yyvsp[0].sval), NULL, NULL);
@@ -1896,47 +1926,47 @@ yyreduce:
         }
         (yyval.sval) = strdup((yyvsp[-2].sval)); track_allocation((yyval.sval));
     }
-#line 1900 "myparser.tab.c"
-    break;
-
-  case 15: /* assignment_op: ASSIGN  */
-#line 703 "myparser.y"
-              { (yyval.sval) = strdup(":="); track_allocation((yyval.sval)); }
-#line 1906 "myparser.tab.c"
-    break;
-
-  case 16: /* assignment_op: PLUSEQ  */
-#line 704 "myparser.y"
-              { (yyval.sval) = strdup("+="); track_allocation((yyval.sval)); }
-#line 1912 "myparser.tab.c"
-    break;
-
-  case 17: /* assignment_op: MINUSEQ  */
-#line 705 "myparser.y"
-              { (yyval.sval) = strdup("-="); track_allocation((yyval.sval)); }
-#line 1918 "myparser.tab.c"
-    break;
-
-  case 18: /* assignment_op: MULEQ  */
-#line 706 "myparser.y"
-              { (yyval.sval) = strdup("*="); track_allocation((yyval.sval)); }
-#line 1924 "myparser.tab.c"
-    break;
-
-  case 19: /* assignment_op: DIVEQ  */
-#line 707 "myparser.y"
-              { (yyval.sval) = strdup("/="); track_allocation((yyval.sval)); }
 #line 1930 "myparser.tab.c"
     break;
 
-  case 20: /* assignment_op: MODEQ  */
-#line 708 "myparser.y"
-              { (yyval.sval) = strdup("%="); track_allocation((yyval.sval)); }
+  case 15: /* assignment_op: ASSIGN  */
+#line 733 "myparser.y"
+              { (yyval.sval) = strdup(":="); track_allocation((yyval.sval)); }
 #line 1936 "myparser.tab.c"
     break;
 
+  case 16: /* assignment_op: PLUSEQ  */
+#line 734 "myparser.y"
+              { (yyval.sval) = strdup("+="); track_allocation((yyval.sval)); }
+#line 1942 "myparser.tab.c"
+    break;
+
+  case 17: /* assignment_op: MINUSEQ  */
+#line 735 "myparser.y"
+              { (yyval.sval) = strdup("-="); track_allocation((yyval.sval)); }
+#line 1948 "myparser.tab.c"
+    break;
+
+  case 18: /* assignment_op: MULEQ  */
+#line 736 "myparser.y"
+              { (yyval.sval) = strdup("*="); track_allocation((yyval.sval)); }
+#line 1954 "myparser.tab.c"
+    break;
+
+  case 19: /* assignment_op: DIVEQ  */
+#line 737 "myparser.y"
+              { (yyval.sval) = strdup("/="); track_allocation((yyval.sval)); }
+#line 1960 "myparser.tab.c"
+    break;
+
+  case 20: /* assignment_op: MODEQ  */
+#line 738 "myparser.y"
+              { (yyval.sval) = strdup("%="); track_allocation((yyval.sval)); }
+#line 1966 "myparser.tab.c"
+    break;
+
   case 21: /* $@1: %empty  */
-#line 715 "myparser.y"
+#line 745 "myparser.y"
       {
         /* 1) at “do”, generate labels & test */
         char* start = newLabel();  track_allocation(start);
@@ -1947,21 +1977,21 @@ yyreduce:
         emitLabel(start);            /* L1: */
         emitCondJump((yyvsp[-2].sval), end);       /* if t_cond1 == 0 goto L2 */
       }
-#line 1951 "myparser.tab.c"
+#line 1981 "myparser.tab.c"
     break;
 
   case 22: /* while_loop: WHILE OB bool_expr CB DO $@1 block  */
-#line 726 "myparser.y"
+#line 756 "myparser.y"
       {
         /* 2) after the block, loop back & close */
         emitGoto(current_loop_start);  
         emitLabel(current_loop_end);  /* L2: */
       }
-#line 1961 "myparser.tab.c"
+#line 1991 "myparser.tab.c"
     break;
 
   case 23: /* $@2: %empty  */
-#line 739 "myparser.y"
+#line 769 "myparser.y"
       {
         /* 1) init loop var */
         emit((yyvsp[-7].sval), (yyvsp[-5].sval), NULL, NULL);             /* a := (10, 8) */
@@ -1984,23 +2014,35 @@ yyreduce:
                                               /* t4 := (1, 10) */
         printf("\n");
 
-        /* 4) test and conditional jump */
+        /* 4) test and conditional jump - handle inc/dec direction */
         char* cond = newCondTemp();
-        emit(cond, (yyvsp[-7].sval), ">", bound);           /* t_cond2 := a > t3 */
+        if (strcmp((yyvsp[-2].sval), "inc") == 0) {
+            emit(cond, (yyvsp[-7].sval), ">", bound);           /* t_cond2 := a > t3 */
+        } else {
+            emit(cond, (yyvsp[-7].sval), "<", bound);           /* t_cond2 := a < t3 */
+        }
         emitCondJumpTrue(cond, end);          /* if t_cond2 == 1 goto L4 */
         printf("\n");
       }
-#line 1994 "myparser.tab.c"
+#line 2028 "myparser.tab.c"
     break;
 
   case 24: /* for_stmt: FOR identifier ASSIGN expression TO expression for_dir for_step DO $@2 block  */
-#line 768 "myparser.y"
+#line 802 "myparser.y"
       {
         /* 5) body already emitted by `block` */
 
-        /* 6) increment by saved step temp */
+        /* 6) increment by saved step temp based on direction */
         char* tmp = newTemp();
-        emit(tmp, (yyvsp[-9].sval), "+", current_for_step_temp);  
+        char* dir = strdup(current_for_step_temp);  // Save the direction
+        track_allocation(dir);
+        
+        // Check the for_dir type
+        if (strstr(dir, "inc")) {
+            emit(tmp, (yyvsp[-9].sval), "+", current_for_step_temp);
+        } else {
+            emit(tmp, (yyvsp[-9].sval), "-", current_for_step_temp);
+        }
         emit((yyvsp[-9].sval), tmp, NULL, NULL);             /* a := tmp */
         printf("\n");
 
@@ -2009,122 +2051,122 @@ yyreduce:
         emitLabel(current_for_end);            /* L4: */
         printf("\n");
       }
-#line 2013 "myparser.tab.c"
+#line 2055 "myparser.tab.c"
     break;
 
   case 25: /* $@3: %empty  */
-#line 790 "myparser.y"
+#line 832 "myparser.y"
       { 
         /* 1) at “)”, make labels and emit the conditional jump */
         __if_false = newLabel();    track_allocation(__if_false);
         __if_end   = newLabel();    track_allocation(__if_end);
         emitCondJump((yyvsp[-1].sval), __if_false);  
       }
-#line 2024 "myparser.tab.c"
+#line 2066 "myparser.tab.c"
     break;
 
   case 26: /* $@4: %empty  */
-#line 797 "myparser.y"
+#line 839 "myparser.y"
       {
         /* 2) right after THEN block */
         emitGoto(__if_end);
         emitLabel(__if_false);  
       }
-#line 2034 "myparser.tab.c"
+#line 2076 "myparser.tab.c"
     break;
 
   case 27: /* if_cond: IF OB bool_expr CB $@3 block $@4 ELSE block  */
-#line 804 "myparser.y"
+#line 846 "myparser.y"
       {
         /* 3) after ELSE block */
         emitLabel(__if_end);
       }
-#line 2043 "myparser.tab.c"
+#line 2085 "myparser.tab.c"
     break;
 
   case 28: /* expression: term  */
-#line 814 "myparser.y"
+#line 856 "myparser.y"
                              { (yyval.sval) = (yyvsp[0].sval); }
-#line 2049 "myparser.tab.c"
+#line 2091 "myparser.tab.c"
     break;
 
   case 29: /* expression: expression ADD term  */
-#line 815 "myparser.y"
+#line 857 "myparser.y"
                              {
         char* temp = newTemp();
         emit(temp, (yyvsp[-2].sval), "+", (yyvsp[0].sval)); (yyval.sval) = temp;
     }
-#line 2058 "myparser.tab.c"
+#line 2100 "myparser.tab.c"
     break;
 
   case 30: /* expression: expression SUB term  */
-#line 819 "myparser.y"
+#line 861 "myparser.y"
                              {
         char* temp = newTemp();
         emit(temp, (yyvsp[-2].sval), "-", (yyvsp[0].sval)); (yyval.sval) = temp;
     }
-#line 2067 "myparser.tab.c"
+#line 2109 "myparser.tab.c"
     break;
 
   case 31: /* term: factor  */
-#line 826 "myparser.y"
+#line 868 "myparser.y"
                             { (yyval.sval) = (yyvsp[0].sval); }
-#line 2073 "myparser.tab.c"
+#line 2115 "myparser.tab.c"
     break;
 
   case 32: /* term: term MUL factor  */
-#line 827 "myparser.y"
+#line 869 "myparser.y"
                             {
         char* temp = newTemp();
         emit(temp, (yyvsp[-2].sval), "*", (yyvsp[0].sval)); (yyval.sval) = temp;
     }
-#line 2082 "myparser.tab.c"
+#line 2124 "myparser.tab.c"
     break;
 
   case 33: /* term: term DIV factor  */
-#line 831 "myparser.y"
+#line 873 "myparser.y"
                             {
         char* temp = newTemp();
         emit(temp, (yyvsp[-2].sval), "/", (yyvsp[0].sval)); (yyval.sval) = temp;
     }
-#line 2091 "myparser.tab.c"
+#line 2133 "myparser.tab.c"
     break;
 
   case 34: /* term: term MOD factor  */
-#line 835 "myparser.y"
+#line 877 "myparser.y"
                             {
         char* temp = newTemp();
         emit(temp, (yyvsp[-2].sval), "%", (yyvsp[0].sval)); (yyval.sval) = temp;
     }
-#line 2100 "myparser.tab.c"
+#line 2142 "myparser.tab.c"
     break;
 
   case 35: /* factor: OB expression CB  */
-#line 842 "myparser.y"
+#line 884 "myparser.y"
                              { (yyval.sval) = (yyvsp[-1].sval); }
-#line 2106 "myparser.tab.c"
+#line 2148 "myparser.tab.c"
     break;
 
   case 36: /* factor: identifier  */
-#line 843 "myparser.y"
+#line 885 "myparser.y"
                              { (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval)); }
-#line 2112 "myparser.tab.c"
+#line 2154 "myparser.tab.c"
     break;
 
   case 37: /* factor: INTEGER_CONST  */
-#line 844 "myparser.y"
+#line 886 "myparser.y"
                              { (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval)); }
-#line 2118 "myparser.tab.c"
+#line 2160 "myparser.tab.c"
     break;
 
   case 38: /* factor: CHAR_LITERAL  */
-#line 845 "myparser.y"
+#line 887 "myparser.y"
                              { (yyval.sval) = (yyvsp[0].sval); }
-#line 2124 "myparser.tab.c"
+#line 2166 "myparser.tab.c"
     break;
 
   case 39: /* identifier: IDENTIFIER  */
-#line 849 "myparser.y"
+#line 891 "myparser.y"
                  {
         if (!is_declared((yyvsp[0].sval))) {
             fprintf(stderr, "Semantic error: variable '%s' used before declaration.\n", (yyvsp[0].sval));
@@ -2132,108 +2174,108 @@ yyreduce:
         }
         (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval));
     }
-#line 2136 "myparser.tab.c"
+#line 2178 "myparser.tab.c"
     break;
 
   case 40: /* bool_expr: condition  */
-#line 859 "myparser.y"
+#line 901 "myparser.y"
                 { (yyval.sval) = (yyvsp[0].sval); }
-#line 2142 "myparser.tab.c"
+#line 2184 "myparser.tab.c"
     break;
 
   case 41: /* bool_expr: bool_expr AND bool_expr  */
-#line 860 "myparser.y"
+#line 902 "myparser.y"
                               {
         char* temp = newTemp();
         emit(temp, (yyvsp[-2].sval), "and", (yyvsp[0].sval)); (yyval.sval) = temp;
     }
-#line 2151 "myparser.tab.c"
+#line 2193 "myparser.tab.c"
     break;
 
   case 42: /* bool_expr: bool_expr OR bool_expr  */
-#line 864 "myparser.y"
+#line 906 "myparser.y"
                              {
         char* temp = newTemp();
         emit(temp, (yyvsp[-2].sval), "or", (yyvsp[0].sval)); (yyval.sval) = temp;
     }
-#line 2160 "myparser.tab.c"
+#line 2202 "myparser.tab.c"
     break;
 
   case 43: /* bool_expr: NOT bool_expr  */
-#line 868 "myparser.y"
+#line 910 "myparser.y"
                     {
         char* temp = newTemp();
         emit(temp, "not", (yyvsp[0].sval), NULL); (yyval.sval) = temp;
     }
-#line 2169 "myparser.tab.c"
+#line 2211 "myparser.tab.c"
     break;
 
   case 44: /* condition: expression relop expression  */
-#line 875 "myparser.y"
+#line 917 "myparser.y"
                                 {
       char* tmp = newCondTemp();      
       emit(tmp, (yyvsp[-2].sval), (yyvsp[-1].sval), (yyvsp[0].sval));          /* t_cond1 := lhs relop rhs */
       (yyval.sval) = tmp;
   }
-#line 2179 "myparser.tab.c"
-    break;
-
-  case 45: /* relop: EQ  */
-#line 887 "myparser.y"
-         { (yyval.sval) = strdup("="); track_allocation((yyval.sval)); }
-#line 2185 "myparser.tab.c"
-    break;
-
-  case 46: /* relop: NE  */
-#line 888 "myparser.y"
-         { (yyval.sval) = strdup("!="); track_allocation((yyval.sval)); }
-#line 2191 "myparser.tab.c"
-    break;
-
-  case 47: /* relop: GT  */
-#line 889 "myparser.y"
-         { (yyval.sval) = strdup(">"); track_allocation((yyval.sval)); }
-#line 2197 "myparser.tab.c"
-    break;
-
-  case 48: /* relop: GE  */
-#line 890 "myparser.y"
-         { (yyval.sval) = strdup(">="); track_allocation((yyval.sval)); }
-#line 2203 "myparser.tab.c"
-    break;
-
-  case 49: /* relop: LT  */
-#line 891 "myparser.y"
-         { (yyval.sval) = strdup("<"); track_allocation((yyval.sval)); }
-#line 2209 "myparser.tab.c"
-    break;
-
-  case 50: /* relop: LE  */
-#line 892 "myparser.y"
-         { (yyval.sval) = strdup("<="); track_allocation((yyval.sval)); }
-#line 2215 "myparser.tab.c"
-    break;
-
-  case 52: /* for_dir: INC  */
-#line 901 "myparser.y"
-          { (yyval.sval) = strdup("inc"); track_allocation((yyval.sval)); }
 #line 2221 "myparser.tab.c"
     break;
 
-  case 53: /* for_dir: DEC  */
-#line 902 "myparser.y"
-          { (yyval.sval) = strdup("dec"); track_allocation((yyval.sval)); }
+  case 45: /* relop: EQ  */
+#line 929 "myparser.y"
+         { (yyval.sval) = strdup("="); track_allocation((yyval.sval)); }
 #line 2227 "myparser.tab.c"
     break;
 
-  case 54: /* for_step: expression  */
-#line 906 "myparser.y"
-                 { (yyval.sval) = (yyvsp[0].sval); }
+  case 46: /* relop: NE  */
+#line 930 "myparser.y"
+         { (yyval.sval) = strdup("!="); track_allocation((yyval.sval)); }
 #line 2233 "myparser.tab.c"
     break;
 
+  case 47: /* relop: GT  */
+#line 931 "myparser.y"
+         { (yyval.sval) = strdup(">"); track_allocation((yyval.sval)); }
+#line 2239 "myparser.tab.c"
+    break;
+
+  case 48: /* relop: GE  */
+#line 932 "myparser.y"
+         { (yyval.sval) = strdup(">="); track_allocation((yyval.sval)); }
+#line 2245 "myparser.tab.c"
+    break;
+
+  case 49: /* relop: LT  */
+#line 933 "myparser.y"
+         { (yyval.sval) = strdup("<"); track_allocation((yyval.sval)); }
+#line 2251 "myparser.tab.c"
+    break;
+
+  case 50: /* relop: LE  */
+#line 934 "myparser.y"
+         { (yyval.sval) = strdup("<="); track_allocation((yyval.sval)); }
+#line 2257 "myparser.tab.c"
+    break;
+
+  case 52: /* for_dir: INC  */
+#line 943 "myparser.y"
+          { (yyval.sval) = strdup("inc"); track_allocation((yyval.sval)); }
+#line 2263 "myparser.tab.c"
+    break;
+
+  case 53: /* for_dir: DEC  */
+#line 944 "myparser.y"
+          { (yyval.sval) = strdup("dec"); track_allocation((yyval.sval)); }
+#line 2269 "myparser.tab.c"
+    break;
+
+  case 54: /* for_step: expression  */
+#line 948 "myparser.y"
+                 { (yyval.sval) = (yyvsp[0].sval); }
+#line 2275 "myparser.tab.c"
+    break;
+
   case 55: /* print: PRINT OB STRING_LITERAL formatArgs CB SEMICOLON  */
-#line 915 "myparser.y"
+#line 957 "myparser.y"
                                                       {
         if ((yyvsp[-2].sval)) {
             printf("print \"%s\", %s\n", (yyvsp[-3].sval), (yyvsp[-2].sval));
@@ -2243,70 +2285,70 @@ yyreduce:
             emitPrint((yyvsp[-3].sval), NULL);
         }
     }
-#line 2247 "myparser.tab.c"
+#line 2289 "myparser.tab.c"
     break;
 
   case 56: /* scan: SCAN OB STRING_LITERAL COMMA argList CB SEMICOLON  */
-#line 927 "myparser.y"
+#line 969 "myparser.y"
                                                         {
         printf("scan \"%s\"\n", (yyvsp[-4].sval));
         if ((yyvsp[-2].sval)) printf("vars: %s\n", (yyvsp[-2].sval)); // variables list
         emitScan((yyvsp[-4].sval), (yyvsp[-2].sval));
     }
-#line 2257 "myparser.tab.c"
+#line 2299 "myparser.tab.c"
     break;
 
   case 57: /* formatArgs: %empty  */
-#line 935 "myparser.y"
+#line 977 "myparser.y"
                   { (yyval.sval) = NULL; }
-#line 2263 "myparser.tab.c"
+#line 2305 "myparser.tab.c"
     break;
 
   case 58: /* formatArgs: COMMA argList  */
-#line 936 "myparser.y"
+#line 978 "myparser.y"
                     { (yyval.sval) = (yyvsp[0].sval); }
-#line 2269 "myparser.tab.c"
+#line 2311 "myparser.tab.c"
     break;
 
   case 59: /* argList: value  */
-#line 940 "myparser.y"
+#line 982 "myparser.y"
             {
         (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval));
     }
-#line 2277 "myparser.tab.c"
+#line 2319 "myparser.tab.c"
     break;
 
   case 60: /* argList: value COMMA argList  */
-#line 943 "myparser.y"
+#line 985 "myparser.y"
                           {
         char* temp = malloc(strlen((yyvsp[-2].sval)) + strlen((yyvsp[0].sval)) + 2);
         sprintf(temp, "%s,%s", (yyvsp[-2].sval), (yyvsp[0].sval));
         track_allocation(temp);
         (yyval.sval) = temp;
     }
-#line 2288 "myparser.tab.c"
+#line 2330 "myparser.tab.c"
     break;
 
   case 61: /* value: identifier  */
-#line 952 "myparser.y"
+#line 994 "myparser.y"
                  { (yyval.sval) = (yyvsp[0].sval); }
-#line 2294 "myparser.tab.c"
+#line 2336 "myparser.tab.c"
     break;
 
   case 62: /* value: INTEGER_CONST  */
-#line 953 "myparser.y"
+#line 995 "myparser.y"
                     { (yyval.sval) = (yyvsp[0].sval); }
-#line 2300 "myparser.tab.c"
+#line 2342 "myparser.tab.c"
     break;
 
   case 63: /* value: CHAR_LITERAL  */
-#line 954 "myparser.y"
+#line 996 "myparser.y"
                     { (yyval.sval) = (yyvsp[0].sval); }
-#line 2306 "myparser.tab.c"
+#line 2348 "myparser.tab.c"
     break;
 
   case 67: /* VarDeclaration: OB IDENTIFIER arrayDec COMMA type CB SEMICOLON  */
-#line 969 "myparser.y"
+#line 1011 "myparser.y"
                                                      {
         // Handle array declaration
         int is_array = 0;
@@ -2342,11 +2384,11 @@ yyreduce:
         
         free(base_name);
     }
-#line 2346 "myparser.tab.c"
+#line 2388 "myparser.tab.c"
     break;
 
 
-#line 2350 "myparser.tab.c"
+#line 2392 "myparser.tab.c"
 
       default: break;
     }
@@ -2539,7 +2581,7 @@ yyreturnlab:
   return yyresult;
 }
 
-#line 1018 "myparser.y"
+#line 1060 "myparser.y"
 
 
 int main(int argc, char *argv[]) {
@@ -2555,7 +2597,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (yyparse() == 0) {
-        printf("Parsing completed successfully.\n");
+        printf("\nParsing completed successfully.\n");
         
         // Initialize temporary variables for simulation
         for (int i = 0; i < MAX_TEMP_VARS; i++) {
@@ -2563,10 +2605,12 @@ int main(int argc, char *argv[]) {
             temp_vars[i].type = TYPE_UNKNOWN;
         }
         
+        printf("\nStarting program simulation...\n");
         // Execute the program
         execute_program();
         
         // Print the symbol table
+        printf("\nPrinting symbol table...\n");
         print_symbol_table();
     }
 

@@ -312,12 +312,17 @@ int parse_integer_const(const char* str) {
     int value = atoi(copy);
     int base = atoi(comma + 1);
     
-    // Convert from the given base to decimal
+    // Convert from the given base to decimal (only relevant for base 2 and 8)
     if (base == 2 || base == 8) {
         int decimal_value = 0;
         int digit_value;
         for (int i = 0; copy[i] != '\0'; i++) {
             digit_value = copy[i] - '0';
+            if ((base == 2 && digit_value > 1) || 
+                (base == 8 && digit_value > 7)) {
+                fprintf(stderr, "Semantic error: Invalid digit for base %d\n", base);
+                exit(1);
+            }
             decimal_value = decimal_value * base + digit_value;
         }
         value = decimal_value;
@@ -424,9 +429,21 @@ int perform_op(int left, const char* op, int right) {
     return 0;
 }
 
-// Execute a single instruction
+// Add a debug flag to help with debugging
+int debug_simulation = 1;  // Set to 1 to enable debug messages during simulation
+
+// Modify execute_instruction to add debug information
 int execute_instruction(int idx) {
     Instruction* instr = &instructions[idx];
+    
+    if (debug_simulation) {
+        printf("DEBUG: Executing instruction %d\n", idx);
+        if (instr->is_label) printf("DEBUG: Label: %s\n", instr->label);
+        else if (instr->is_goto) printf("DEBUG: Goto: %s\n", instr->label);
+        else if (instr->is_cond_jump) printf("DEBUG: Cond jump: %s to %s\n", instr->condition, instr->label);
+        else if (instr->is_print) printf("DEBUG: Print: %s\n", instr->arg1);
+        else if (instr->result) printf("DEBUG: Assignment: %s\n", instr->result);
+    }
     
     // Handle label (no action needed, just for jumps)
     if (instr->is_label) return idx + 1;
@@ -579,10 +596,23 @@ int execute_instruction(int idx) {
 void execute_program() {
     printf("\n=== Program Output ===\n");
     
+    // Check if we have any instructions to execute
+    if (instruction_count == 0) {
+        printf("Warning: No instructions to execute\n");
+        return;
+    }
+    
+    // Print number of instructions for debugging
+    if (debug_simulation) {
+        printf("DEBUG: Executing %d instructions\n", instruction_count);
+    }
+    
     int pc = 0;  // Program counter
     while (pc < instruction_count) {
         pc = execute_instruction(pc);
     }
+    
+    printf("\n=== End of Program Output ===\n");
 }
 
 // Print symbol table
@@ -758,9 +788,13 @@ for_stmt
                                               /* t4 := (1, 10) */
         printf("\n");
 
-        /* 4) test and conditional jump */
+        /* 4) test and conditional jump - handle inc/dec direction */
         char* cond = newCondTemp();
-        emit(cond, $2, ">", bound);           /* t_cond2 := a > t3 */
+        if (strcmp($7, "inc") == 0) {
+            emit(cond, $2, ">", bound);           /* t_cond2 := a > t3 */
+        } else {
+            emit(cond, $2, "<", bound);           /* t_cond2 := a < t3 */
+        }
         emitCondJumpTrue(cond, end);          /* if t_cond2 == 1 goto L4 */
         printf("\n");
       }
@@ -768,9 +802,17 @@ for_stmt
       {
         /* 5) body already emitted by `block` */
 
-        /* 6) increment by saved step temp */
+        /* 6) increment by saved step temp based on direction */
         char* tmp = newTemp();
-        emit(tmp, $2, "+", current_for_step_temp);  
+        char* dir = strdup(current_for_step_temp);  // Save the direction
+        track_allocation(dir);
+        
+        // Check the for_dir type
+        if (strstr(dir, "inc")) {
+            emit(tmp, $2, "+", current_for_step_temp);
+        } else {
+            emit(tmp, $2, "-", current_for_step_temp);
+        }
         emit($2, tmp, NULL, NULL);             /* a := tmp */
         printf("\n");
 
@@ -1030,7 +1072,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (yyparse() == 0) {
-        printf("Parsing completed successfully.\n");
+        printf("\nParsing completed successfully.\n");
         
         // Initialize temporary variables for simulation
         for (int i = 0; i < MAX_TEMP_VARS; i++) {
@@ -1038,10 +1080,12 @@ int main(int argc, char *argv[]) {
             temp_vars[i].type = TYPE_UNKNOWN;
         }
         
+        printf("\nStarting program simulation...\n");
         // Execute the program
         execute_program();
         
         // Print the symbol table
+        printf("\nPrinting symbol table...\n");
         print_symbol_table();
     }
 
