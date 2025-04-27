@@ -39,6 +39,9 @@ typedef struct ASTNode {
     } data;
 } ASTNode;
 
+// Add function declaration for convert_base
+int convert_base(int value, int from_base);
+
 ASTNode* create_node(NodeType type);
 void add_child(ASTNode* parent, ASTNode* child);
 void print_ast(ASTNode* node, int depth);

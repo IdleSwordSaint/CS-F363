@@ -1094,9 +1094,9 @@ type
         $$->data.string_value = strdup("char");
         track_allocation($$->data.string_value);
     }
-    ;
+     ;
 
-// In the integerConst rule, modify to properly handle base conversions
+// Update the integerConst rule to properly handle base conversions
 integerConst
     : OB DECIMAL COMMA DECIMAL CB {
         if ($4 != 2 && $4 != 8 && $4 != 10) {
@@ -1107,7 +1107,7 @@ integerConst
         char num_str[32];
         sprintf(num_str, "%d", $2);
         
-        // Convert the value based on the given base
+        // Convert to decimal using the convert_base function
         int decimal_value = convert_base($2, $4);
         
         if (debug_simulation) {
@@ -1115,8 +1115,8 @@ integerConst
         }
         
         $$ = create_node(NODE_INT_CONST);
-        $$->data.int_const.int_value = decimal_value; // Store the converted decimal value
-        $$->data.int_const.base = $4;
+        $$->data.int_const.int_value = decimal_value;  // Store the converted decimal value
+        $$->data.int_const.base = $4;  // Keep original base for reference
     }
     ;
 

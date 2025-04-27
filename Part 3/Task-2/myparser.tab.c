@@ -2577,7 +2577,7 @@ yyreduce:
         char num_str[32];
         sprintf(num_str, "%d", (yyvsp[-3].int_val));
         
-        // Convert the value based on the given base
+        // Convert to decimal using the convert_base function
         int decimal_value = convert_base((yyvsp[-3].int_val), (yyvsp[-1].int_val));
         
         if (debug_simulation) {
@@ -2585,8 +2585,8 @@ yyreduce:
         }
         
         (yyval.node) = create_node(NODE_INT_CONST);
-        (yyval.node)->data.int_const.int_value = decimal_value; // Store the converted decimal value
-        (yyval.node)->data.int_const.base = (yyvsp[-1].int_val);
+        (yyval.node)->data.int_const.int_value = decimal_value;  // Store the converted decimal value
+        (yyval.node)->data.int_const.base = (yyvsp[-1].int_val);  // Keep original base for reference
     }
 #line 2592 "myparser.tab.c"
     break;
