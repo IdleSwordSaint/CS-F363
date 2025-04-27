@@ -69,10 +69,11 @@
 /* First part of user prologue.  */
 #line 1 "myparser.y"
 
-#include<stdio.h>
-#include<stdlib.h>
-#include<string.h>
-#include<ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include "ast.h"
 
 extern int yylex();
 extern int yyparse();
@@ -80,22 +81,13 @@ extern FILE* yyin;
 extern int yylineno;
 void yyerror(const char* s);
 
-int temp_count = 0, label_count = 0;
+// Root of the AST
+ASTNode* ast_root = NULL;
 
-// Add these at the top of your file with other globals
-char* current_loop_start = NULL;
-char* current_loop_end = NULL;
-char* current_for_start = NULL;
-char* current_for_end = NULL;
-char* loop_var = NULL;
-char* loop_end = NULL;
-char *__if_else_L1, *__if_else_L2;
-  char* __if_false;
-  char* __if_end;
-  /* above all your rules */
-char* current_for_step_temp;
+// Debug flag
+int debug_simulation = 0;
 
-// ---- Extended symbol table for simulation ----
+// ---- Symbol table for runtime simulation ----
 typedef enum {
     TYPE_INT,
     TYPE_CHAR,
@@ -115,197 +107,58 @@ typedef struct {
 } Symbol;
 
 #define MAX_SYMBOLS 1000
-#define MAX_TEMP_VARS 1000
-#define MAX_INSTRUCTIONS 5000
-
 Symbol symbol_table[MAX_SYMBOLS];
-Symbol temp_vars[MAX_TEMP_VARS];  // Store values for temporary variables
 int symbol_count = 0;
 
-// Instructions for simulation
-typedef struct {
-    char* result;
-    char* arg1;
-    char* op;
-    char* arg2;
-    int is_label;
-    int is_goto;
-    int is_cond_jump;
-    int is_print;
-    int is_scan;
-    char* label;
-    char* condition;
-} Instruction;
-
-Instruction instructions[MAX_INSTRUCTIONS];
-int instruction_count = 0;
-
-// Memory management ----
+// Memory management
 char** allocated_memory = NULL;
 int allocated_count = 0;
+int allocated_capacity = 0;
+int cleanup_started = 0;
 
 void track_allocation(char* ptr) {
-    allocated_memory = realloc(allocated_memory, sizeof(char*) * (allocated_count + 1));
+    if (!ptr || cleanup_started) return; // Don't track NULL pointers or during cleanup
+    
+    // First check if this pointer is already being tracked
+    for (int i = 0; i < allocated_count; i++) {
+        if (allocated_memory[i] == ptr) {
+            return; // Already tracked, don't add it again
+        }
+    }
+    
+    // Grow array if needed with some extra capacity
+    if (allocated_count >= allocated_capacity) {
+        allocated_capacity = allocated_capacity ? allocated_capacity * 2 : 32;
+        char** new_memory = realloc(allocated_memory, sizeof(char*) * allocated_capacity);
+        if (!new_memory) {
+            fprintf(stderr, "Memory allocation failed during track_allocation\n");
+            exit(1);
+        }
+        allocated_memory = new_memory;
+    }
+    
     allocated_memory[allocated_count++] = ptr;
 }
 
 void cleanup_memory() {
-    for (int i = 0; i < allocated_count; i++)
-        free(allocated_memory[i]);
-    free(allocated_memory);
-}
-
-// ---- Temporary and Label Generators ----
-int temp_var_counter = 1;  // For regular temp variables (t1, t2, etc.)
-int cond_var_counter = 1;  // For condition variables (t_cond1, t_cond2, etc.)
-
-char* newCondTemp() {
-    char* temp = malloc(20);
-    sprintf(temp, "t_cond%d", cond_var_counter++);
-    track_allocation(temp);
-    return temp;
-}
-
-char* newTemp() {
-    char* temp = malloc(10);
-    sprintf(temp, "t%d", temp_count+1);
-    temp_count++;
-    track_allocation(temp);
-    return temp;
-}
-
-char* newLabel() {
-    char* label = malloc(10);
-    sprintf(label, "L%d", label_count+1);
-    label_count++;
-    track_allocation(label);
-    return label;
-}
-
-// ---- Emit TAC and store for simulation ----
-void emit(char* result, char* arg1, char* op, char* arg2) {
-    if (arg2 && op) printf("%s := %s %s %s\n", result, arg1, op, arg2);
-    else if (op)    printf("%s := %s %s\n", result, op, arg1);
-    else            printf("%s := %s\n", result, arg1);
+    if (!allocated_memory || cleanup_started) return;
     
-    // Store instruction for simulation
-    instructions[instruction_count].result = strdup(result);
-    instructions[instruction_count].arg1 = arg1 ? strdup(arg1) : NULL;
-    instructions[instruction_count].op = op ? strdup(op) : NULL;
-    instructions[instruction_count].arg2 = arg2 ? strdup(arg2) : NULL;
-    instructions[instruction_count].is_label = 0;
-    instructions[instruction_count].is_goto = 0;
-    instructions[instruction_count].is_cond_jump = 0;
-    instructions[instruction_count].is_print = 0;
-    instructions[instruction_count].is_scan = 0;
-    instructions[instruction_count].label = NULL;
-    instructions[instruction_count].condition = NULL;
-    instruction_count++;
-}
-
-void emitPrint(char* str, char* args) {
-    // Store print instruction
-    instructions[instruction_count].is_print = 1;
-    instructions[instruction_count].arg1 = strdup(str);
-    instructions[instruction_count].arg2 = args ? strdup(args) : NULL;
-    instruction_count++;
+    cleanup_started = 1; // Set flag to prevent reentry
     
-    // Check format specifiers match argument count
-    if (args) {
-        int format_count = 0;
-        int arg_count = 1; // Start with 1 for the first argument
-        
-        // Count format specifiers
-        for (int i = 0; i < strlen(str); i++) {
-            if (str[i] == '%' && i+1 < strlen(str) && str[i+1] == 'd') {
-                format_count++;
-            }
-        }
-        
-        // Count arguments
-        for (int i = 0; i < strlen(args); i++) {
-            if (args[i] == ',') arg_count++;
-        }
-        
-        if (format_count != arg_count) {
-            fprintf(stderr, "Warning at line %d: Format specifier count (%d) doesn't match argument count (%d)\n", 
-                    yylineno, format_count, arg_count);
+    for (int i = 0; i < allocated_count; i++) {
+        if (allocated_memory[i]) {
+            free(allocated_memory[i]);
+            allocated_memory[i] = NULL;
         }
     }
-}
-
-void emitScan(char* str, char* args) {
-    // Store scan instruction
-    instructions[instruction_count].is_scan = 1;
-    instructions[instruction_count].arg1 = strdup(str);
-    instructions[instruction_count].arg2 = args ? strdup(args) : NULL;
-    instruction_count++;
-}
-
-void emitCondJump(char* cond, char* label) {
-    printf("if %s == 0 goto %s\n", cond, label);
     
-    // Store conditional jump for simulation
-    instructions[instruction_count].is_cond_jump = 1;
-    instructions[instruction_count].condition = strdup(cond);
-    instructions[instruction_count].label = strdup(label);
-    instruction_count++;
+    free(allocated_memory);
+    allocated_memory = NULL;
+    allocated_count = 0;
+    allocated_capacity = 0;
 }
 
-void emitCondJumpTrue(char* cond, char* label) {
-    printf("if %s == 1 goto %s\n", cond, label);
-    
-    // Store conditional jump for simulation
-    instructions[instruction_count].is_cond_jump = 1;
-    instructions[instruction_count].condition = strdup(cond);
-    instructions[instruction_count].label = strdup(label);
-    // This is a jump if true, so we need to invert our condition check in simulation
-    instructions[instruction_count].arg1 = strdup("true");
-    instruction_count++;
-}
-
-void emitGoto(char* label) {
-    printf("goto %s\n", label);
-    
-    // Store goto for simulation
-    instructions[instruction_count].is_goto = 1;
-    instructions[instruction_count].label = strdup(label);
-    instruction_count++;
-}
-
-void emitLabel(char* label) {
-    printf("%s:\n", label);
-    
-    // Store label for simulation
-    instructions[instruction_count].is_label = 1;
-    instructions[instruction_count].label = strdup(label);
-    instruction_count++;
-}
-
-// ---- Variable and symbol table management ----
-#define MAX_VARS 1000
-char* declared_vars[MAX_VARS];
-int var_count = 0;
-
-int is_keyword(const char* name) {
-    const char* keywords[] = {
-        "int", "char", "if", "else", "while", "for", "main", "begin", "end",
-        "print", "scan", "program", "VarDecl", "inc", "dec", NULL
-    };
-    for (int i = 0; keywords[i]; ++i)
-        if (strcmp(name, keywords[i]) == 0)
-            return 1;
-    return 0;
-}
-
-int is_declared(const char* name) {
-    for (int i = 0; i < var_count; i++)
-        if (strcmp(declared_vars[i], name) == 0)
-            return 1;
-    return 0;
-}
-
-// Find symbol by name in symbol table
+// Symbol table functions
 int find_symbol(const char* name) {
     for (int i = 0; i < symbol_count; i++) {
         if (strcmp(symbol_table[i].name, name) == 0)
@@ -314,63 +167,20 @@ int find_symbol(const char* name) {
     return -1;
 }
 
-// Find temp variable
-int find_temp_var(const char* name) {
-    // Check if it's a temporary variable (t1, t2, etc.)
-    if (name[0] == 't' && (name[1] == '_' || isdigit(name[1]))) {
-        int idx = -1;
-        if (name[1] == '_') {
-            // Handle t_cond variables
-            sscanf(name, "t_cond%d", &idx);
-            if (idx > 0 && idx <= cond_var_counter)
-                return idx - 1;
-        } else {
-            sscanf(name, "t%d", &idx);
-            if (idx > 0 && idx <= temp_var_counter)
-                return idx - 1;
-        }
-    }
-    return -1;
-}
-
-void declare_variable(const char* name) {
-    if (is_declared(name)) {
+void declare_variable(const char* name, VarType type, int is_array, int array_size) {
+    int idx = find_symbol(name);
+    if (idx >= 0) {
         fprintf(stderr, "Semantic error at line %d: Variable '%s' redeclared.\n", yylineno, name);
         exit(1);
     }
-    if (is_keyword(name)) {
-        fprintf(stderr, "Semantic error at line %d: Keyword '%s' used as identifier.\n", yylineno, name);
-        exit(1);
-    }
 
-    // Basic validation: starts with lowercase, one underscore max
-    int len = strlen(name), underscore_count = 0;
-    if (!islower(name[0])) {
-        fprintf(stderr, "Invalid variable name at line %d: '%s'. Must start with lowercase.\n", yylineno, name);
-        exit(1);
-    }
-
-    for (int i = 0; i < len; i++) {
-        if (!(islower(name[i]) || isdigit(name[i]) || name[i] == '_')) {
-            fprintf(stderr, "Invalid character in variable name '%s'.\n", name);
-            exit(1);
-        }
-        if (name[i] == '_') underscore_count++;
-    }
-
-    if (underscore_count > 1) {
-        fprintf(stderr, "Invalid variable name at line %d: '%s'. Only one underscore allowed.\n", yylineno, name);
-        exit(1);
-    }
-
-    declared_vars[var_count++] = strdup(name);
-    
-    // Also add to symbol table for simulation
     if (symbol_count < MAX_SYMBOLS) {
         symbol_table[symbol_count].name = strdup(name);
-        symbol_table[symbol_count].type = TYPE_UNKNOWN;
+        symbol_table[symbol_count].type = type;
         symbol_table[symbol_count].initialized = 0;
-        symbol_table[symbol_count].is_array = 0;
+        symbol_table[symbol_count].is_array = is_array;
+        symbol_table[symbol_count].array_size = array_size;
+        track_allocation(symbol_table[symbol_count].name);
         symbol_count++;
     } else {
         fprintf(stderr, "Error: Symbol table full\n");
@@ -378,148 +188,118 @@ void declare_variable(const char* name) {
     }
 }
 
-char* getBaseOperator(char* op) {
-    const char* ops[][2] = {
-        {"+=", "+"}, {"-=", "-"}, {"*=", "*"}, {"/=", "/"}, {"%=", "%"}, {NULL, NULL}
-    };
-    for (int i = 0; ops[i][0]; ++i)
-        if (strcmp(op, ops[i][0]) == 0)
-            return strdup(ops[i][1]);
-    return strdup(op);
-}
-
-// ---- Simulation functions ----
-// Helper function to get the actual value from (value, base) format
-int parse_integer_const(const char* str) {
-    // Skip the opening bracket
-    char* copy = strdup(str + 1);
-    // Find the comma
-    char* comma = strchr(copy, ',');
-    if (!comma) {
-        free(copy);
-        return atoi(str); // Default fallback if format is invalid
-    }
-    *comma = '\0';
-    
-    // Get the value and base
-    int value = atoi(copy);
-    int base = atoi(comma + 1);
-    
-    // Convert from the given base to decimal (only relevant for base 2 and 8)
-    if (base == 2 || base == 8) {
-        int decimal_value = 0;
-        int digit_value;
-        for (int i = 0; copy[i] != '\0'; i++) {
-            digit_value = copy[i] - '0';
-            if ((base == 2 && digit_value > 1) || 
-                (base == 8 && digit_value > 7)) {
-                fprintf(stderr, "Semantic error: Invalid digit for base %d\n", base);
-                exit(1);
-            }
-            decimal_value = decimal_value * base + digit_value;
+// Check array bounds
+void check_array_bounds(const char* name, int index) {
+    int symbol_idx = find_symbol(name);
+    if (symbol_idx >= 0 && symbol_table[symbol_idx].is_array) {
+        if (index < 0 || index >= symbol_table[symbol_idx].array_size) {
+            fprintf(stderr, "Runtime error at line %d: Array index %d out of bounds for array '%s' [size %d]\n",
+                    yylineno, index, name, symbol_table[symbol_idx].array_size);
+            exit(1);
         }
-        value = decimal_value;
+    } else if (symbol_idx >= 0 && !symbol_table[symbol_idx].is_array) {
+        fprintf(stderr, "Runtime error at line %d: '%s' is not an array\n", yylineno, name);
+        exit(1);
     }
-    
-    free(copy);
-    return value;
 }
 
-// Get integer value of a variable or literal
-int get_int_value(const char* name) {
-    // Check if it's an array access
-    char* bracket_pos = strchr(name, '[');
+// Get value of variable or literal
+int get_int_value(const ASTNode* node) {
+    switch (node->type) {
+        case NODE_INT_CONST:
+            return node->data.int_const.int_value;
+        
+        case NODE_CHAR_CONST:
+            return node->data.char_value;
+        
+        case NODE_IDENTIFIER: {
+            char* name = node->data.string_value;
+            int index = -1;
+            
+            // Handle array access if there's a child node (array index)
+            if (node->data.compound.num_children > 0) {
+                ASTNode* idx_node = node->data.compound.children[0];
+                index = get_int_value(idx_node);
+                
+                // Extract base name (without brackets)
+                char base_name[256];
+                strncpy(base_name, name, sizeof(base_name) - 1);
+                char* bracket_pos = strchr(base_name, '[');
+                if (bracket_pos) *bracket_pos = '\0';
+                
+                check_array_bounds(base_name, index);
+                
+                int symbol_idx = find_symbol(base_name);
+                if (symbol_idx >= 0) {
+                    if (!symbol_table[symbol_idx].initialized) {
+                        fprintf(stderr, "Semantic error at line %d: Variable '%s' used before initialization.\n", 
+                                yylineno, base_name);
+                        exit(1);
+                    }
+                    // For arrays, just use the index as an offset to the base value for simplicity
+                    return symbol_table[symbol_idx].value.int_val + index;
+                }
+            } else {
+                // Regular variable access
+                int idx = find_symbol(name);
+                if (idx >= 0) {
+                    if (!symbol_table[idx].initialized) {
+                        fprintf(stderr, "Semantic error at line %d: Variable '%s' used before initialization.\n", 
+                                yylineno, name);
+                        exit(1);
+                    }
+                    return symbol_table[idx].value.int_val;
+                }
+            }
+            fprintf(stderr, "Semantic error: Undefined variable '%s'\n", name);
+            exit(1);
+        }
+        
+        default:
+            fprintf(stderr, "Internal error: Invalid node type for value evaluation\n");
+            exit(1);
+    }
+    return 0;
+}
+
+// Set value of a variable
+void set_int_value(const char* name, int value) {
+    char base_name[256];
+    strncpy(base_name, name, sizeof(base_name) - 1);
+    
+    // Handle array assignment
+    char* bracket_pos = strchr(base_name, '[');
     if (bracket_pos) {
-        char base_name[256];
+        *bracket_pos = '\0';
         int index;
-        
-        // Extract base name and index
-        int base_len = bracket_pos - name;
-        strncpy(base_name, name, base_len);
-        base_name[base_len] = '\0';
-        
-        // Parse the index
         sscanf(bracket_pos + 1, "%d", &index);
         
-        // Check array bounds
         check_array_bounds(base_name, index);
         
-        // Get the array element value
-        int array_idx = find_symbol(base_name);
-        if (array_idx >= 0) {
-            if (!symbol_table[array_idx].initialized) {
-                fprintf(stderr, "Semantic error at line %d: Array '%s' used before initialization.\n", 
-                        yylineno, base_name);
-                exit(1);
-            }
-            // For simplicity, we're treating all arrays as int arrays
-            // In a real interpreter, this would depend on the array type
-            return symbol_table[array_idx].value.int_val + index; // Placeholder for array access
+        int idx = find_symbol(base_name);
+        if (idx >= 0) {
+            symbol_table[idx].value.int_val = value - index; // Adjust the base value
+            symbol_table[idx].initialized = 1;
+            symbol_table[idx].type = TYPE_INT;
+            return;
         }
-    }
-
-    // Check if it's a literal number directly
-    if (isdigit(name[0]) || (name[0] == '-' && isdigit(name[1]))) {
-        return atoi(name);
-    }
-    
-    // Check if it's in (value, base) format
-    if (name[0] == '(') {
-        return parse_integer_const(name);
-    }
-    
-    // Check symbol table
-    int idx = find_symbol(name);
-    if (idx >= 0) {
-        if (!symbol_table[idx].initialized) {
-            fprintf(stderr, "Semantic error at line %d: Variable '%s' used before initialization.\n", 
-                    yylineno, name);
-            exit(1);
+    } else {
+        // Regular variable assignment
+        int idx = find_symbol(name);
+        if (idx >= 0) {
+            symbol_table[idx].value.int_val = value;
+            symbol_table[idx].initialized = 1;
+            symbol_table[idx].type = TYPE_INT;
+            return;
         }
-        return symbol_table[idx].value.int_val;
-    }
-    
-    // Check temp variables
-    idx = find_temp_var(name);
-    if (idx >= 0) {
-        if (!temp_vars[idx].initialized) {
-            fprintf(stderr, "Internal error: Temporary variable '%s' used before initialization.\n", name);
-            exit(1);
-        }
-        return temp_vars[idx].value.int_val;
-    }
-    
-    fprintf(stderr, "Semantic error: Undefined variable '%s'\n", name);
-    exit(1);
-    return 0;  // never reached
-}
-
-// Set integer value of a variable
-void set_int_value(const char* name, int value) {
-    // Check if it's a temporary variable
-    int idx = find_temp_var(name);
-    if (idx >= 0) {
-        temp_vars[idx].value.int_val = value;
-        temp_vars[idx].initialized = 1;
-        temp_vars[idx].type = TYPE_INT;
-        return;
-    }
-    
-    // Check symbol table
-    idx = find_symbol(name);
-    if (idx >= 0) {
-        symbol_table[idx].value.int_val = value;
-        symbol_table[idx].initialized = 1;
-        symbol_table[idx].type = TYPE_INT;
-        return;
     }
     
     fprintf(stderr, "Semantic error: Undefined variable '%s'\n", name);
     exit(1);
 }
 
-// Perform arithmetic operation
-int perform_op(int left, const char* op, int right) {
+// Evaluate binary operations
+int perform_binary_op(int left, const char* op, int right) {
     if (strcmp(op, "+") == 0) return left + right;
     if (strcmp(op, "-") == 0) return left - right;
     if (strcmp(op, "*") == 0) return left * right;
@@ -537,243 +317,375 @@ int perform_op(int left, const char* op, int right) {
         }
         return left % right;
     }
-    if (strcmp(op, "and") == 0) return left && right;
-    if (strcmp(op, "or") == 0) return left || right;
-    
-    // Comparison operations
     if (strcmp(op, "=") == 0) return left == right;
     if (strcmp(op, "!=") == 0) return left != right;
     if (strcmp(op, ">") == 0) return left > right;
     if (strcmp(op, ">=") == 0) return left >= right;
     if (strcmp(op, "<") == 0) return left < right;
     if (strcmp(op, "<=") == 0) return left <= right;
+    if (strcmp(op, "and") == 0) return left && right;
+    if (strcmp(op, "or") == 0) return left || right;
     
     fprintf(stderr, "Semantic error: Unknown operator '%s'\n", op);
     exit(1);
+}
+
+// Evaluate expressions
+int evaluate_expression(const ASTNode* node) {
+    if (!node) {
+        fprintf(stderr, "Internal error: NULL node in evaluation\n");
+        exit(1);
+    }
+    
+    switch (node->type) {
+        case NODE_INT_CONST:
+        case NODE_CHAR_CONST:
+        case NODE_IDENTIFIER:
+            return get_int_value(node);
+        
+        case NODE_BINARY_OP: {
+            int left = evaluate_expression(node->data.compound.children[0]);
+            int right = evaluate_expression(node->data.compound.children[1]);
+            return perform_binary_op(left, node->operator, right);
+        }
+        
+        case NODE_RELOP: {
+            int left = evaluate_expression(node->data.compound.children[0]);
+            int right = evaluate_expression(node->data.compound.children[1]);
+            return perform_binary_op(left, node->operator, right);
+        }
+        
+        default:
+            fprintf(stderr, "Internal error: Unsupported node type %d in expression evaluation\n", node->type);
+            exit(1);
+    }
     return 0;
 }
 
-// Add this function to check array access bounds
-void check_array_bounds(const char* name, int index) {
-    int symbol_idx = find_symbol(name);
-    if (symbol_idx >= 0 && symbol_table[symbol_idx].is_array) {
-        if (index < 0 || index >= symbol_table[symbol_idx].array_size) {
-            fprintf(stderr, "Runtime error at line %d: Array index %d out of bounds for array '%s' [size %d]\n",
-                    yylineno, index, name, symbol_table[symbol_idx].array_size);
-            exit(1);
-        }
-    } else if (symbol_idx >= 0 && !symbol_table[symbol_idx].is_array) {
-        fprintf(stderr, "Runtime error at line %d: '%s' is not an array\n", yylineno, name);
-        exit(1);
+// Forward declarations for functions
+void execute_node(const ASTNode* node);
+void execute_assignment(const ASTNode* node);
+void execute_if(const ASTNode* node);
+void execute_while(const ASTNode* node);
+void execute_for(const ASTNode* node);
+void execute_print(const ASTNode* node);
+void execute_scan(const ASTNode* node);
+void execute_block(const ASTNode* node);
+
+// Execute a single statement or block
+void execute_node(const ASTNode* node) {
+    if (!node) return;
+    
+    switch (node->type) {
+        case NODE_PROGRAM:
+        case NODE_BLOCK:
+            execute_block(node);
+            break;
+        
+        case NODE_ASSIGN:
+            execute_assignment(node);
+            break;
+        
+        case NODE_IF:
+            execute_if(node);
+            break;
+        
+        case NODE_WHILE:
+            execute_while(node);
+            break;
+        
+        case NODE_FOR:
+            execute_for(node);
+            break;
+        
+        case NODE_PRINT:
+            execute_print(node);
+            break;
+        
+        case NODE_SCAN:
+            execute_scan(node);
+            break;
+        
+        default:
+            if (node->type != NODE_COMMENT && node->type != NODE_VARDECL) {
+                fprintf(stderr, "Internal error: Unsupported node type %d in execution\n", node->type);
+            }
+            break;
     }
 }
 
-// Add a debug flag to help with debugging
-int debug_simulation = 0;  // Set to 1 to enable debug messages during simulation
-
-// Modify execute_instruction to add debug information
-int execute_instruction(int idx) {
-    Instruction* instr = &instructions[idx];
-    
-    if (debug_simulation) {
-        printf("DEBUG[%d]: ", idx);
-        if (instr->is_label) printf("Label: %s\n", instr->label);
-        else if (instr->is_goto) printf("Goto: %s\n", instr->label);
-        else if (instr->is_cond_jump) printf("Cond jump: %s to %s\n", instr->condition, instr->label);
-        else if (instr->is_print) printf("Print: %s\n", instr->arg1);
-        else if (instr->is_scan) printf("Scan: %s, vars: %s\n", instr->arg1, instr->arg2 ? instr->arg2 : "none");
-        else if (instr->result) {
-            if (instr->op && instr->arg2)
-                printf("Op: %s := %s %s %s\n", instr->result, instr->arg1, instr->op, instr->arg2);
-            else if (instr->op)
-                printf("Op: %s := %s %s\n", instr->result, instr->op, instr->arg1);
-            else
-                printf("Assign: %s := %s\n", instr->result, instr->arg1);
-        }
-    }
-    
-    // Handle label (no action needed, just for jumps)
-    if (instr->is_label) return idx + 1;
-    
-    // Handle goto
-    if (instr->is_goto) {
-        // Find the label
-        for (int i = 0; i < instruction_count; i++) {
-            if (instructions[i].is_label && strcmp(instructions[i].label, instr->label) == 0) {
-                return i;  // Return the index to jump to
-            }
-        }
-        fprintf(stderr, "Runtime error: Label '%s' not found\n", instr->label);
-        exit(1);
-    }
-    
-    // Handle conditional jump
-    if (instr->is_cond_jump) {
-        int condition_value = get_int_value(instr->condition);
-        if (instr->arg1 && strcmp(instr->arg1, "true") == 0) {
-            // Jump if true (condition == 1)
-            if (condition_value == 1) {
-                // Find the label
-                for (int i = 0; i < instruction_count; i++) {
-                    if (instructions[i].is_label && strcmp(instructions[i].label, instr->label) == 0) {
-                        return i;  // Return the index to jump to
-                    }
-                }
-            }
-        } else {
-            // Jump if false (condition == 0)
-            if (condition_value == 0) {
-                // Find the label
-                for (int i = 0; i < instruction_count; i++) {
-                    if (instructions[i].is_label && strcmp(instructions[i].label, instr->label) == 0) {
-                        return i;  // Return the index to jump to
-                    }
-                }
-            }
-        }
-        return idx + 1;  // Continue to next instruction
-    }
-    
-    // Handle print
-    if (instr->is_print) {
-        // Extract string without quotes
-        char* str = instr->arg1;
-        int len = strlen(str);
-        char* clean_str = malloc(len - 1);
-        strncpy(clean_str, str + 1, len - 2);
-        clean_str[len - 2] = '\0';
-        
-        if (instr->arg2) {
-            // Format string with arguments
-            char* args_copy = strdup(instr->arg2);
-            char* token = strtok(args_copy, ",");
-            int arg_count = 0;
-            int values[10];  // Support up to 10 arguments
-            
-            // Parse all arguments
-            while (token && arg_count < 10) {
-                values[arg_count++] = get_int_value(token);
-                token = strtok(NULL, ",");
-            }
-            
-            // Simple formatted output - replace %d with values
-            char* fmt = clean_str;
-            char* output = malloc(1000);
-            char* out_ptr = output;
-            int val_idx = 0;
-            
-            while (*fmt) {
-                if (*fmt == '%' && *(fmt + 1) == 'd') {
-                    if (val_idx < arg_count) {
-                        // We have a value for this format specifier
-                        int chars = sprintf(out_ptr, "%d", values[val_idx++]);
-                        out_ptr += chars;
-                    } else {
-                        // More format specifiers than values - print error indicator
-                        strcpy(out_ptr, "[ERROR:missing arg]");
-                        out_ptr += strlen("[ERROR:missing arg]");
-                    }
-                    fmt += 2;
-                } else {
-                    *out_ptr++ = *fmt++;
-                }
-            }
-            *out_ptr = '\0';
-            
-            printf("%s\n", output);
-            free(output);
-            free(args_copy);
-        } else {
-            printf("%s\n", clean_str);
-        }
-        free(clean_str);
-        return idx + 1;
-    }
-
-    // Handle scan
-    if (instr->is_scan) {
-        // Extract string without quotes
-        char* str = instr->arg1;
-        int len = strlen(str);
-        char* clean_str = malloc(len - 1);
-        strncpy(clean_str, str + 1, len - 2);
-        clean_str[len - 2] = '\0';
-        
-        printf("%s", clean_str);
-        
-        if (instr->arg2) {
-            // Handle variables
-            char* args_copy = strdup(instr->arg2);
-            char* token = strtok(args_copy, ",");
-            
-            while (token) {
-                int val;
-                printf(" %s: ", token);
-                if (scanf("%d", &val) != 1) {
-                    fprintf(stderr, "Error reading input for variable %s\n", token);
-                    val = 0;  // Default value on error
-                }
-                set_int_value(token, val);
-                token = strtok(NULL, ",");
-            }
-            free(args_copy);
-        }
-        free(clean_str);
-        return idx + 1;
-    }
-    
-    // Handle assignment and operations
-    if (instr->result) {
-        if (instr->op) {
-            if (strcmp(instr->op, "not") == 0) {
-                // Unary operation
-                int val = get_int_value(instr->arg1);
-                set_int_value(instr->result, !val);
-            } else if (instr->arg2) {
-                // Binary operation
-                int left = get_int_value(instr->arg1);
-                int right = get_int_value(instr->arg2);
-                int result = perform_op(left, instr->op, right);
-                set_int_value(instr->result, result);
-            }
-        } else if (instr->arg1) {
-            // Simple assignment
-            int val = get_int_value(instr->arg1);
-            set_int_value(instr->result, val);
-        }
-    }
-    
-    return idx + 1;  // Continue to next instruction
-}
-
-// Execute the program
-void execute_program() {
-    printf("\n=== Program Output ===\n");
-    
-    // Check if we have any instructions to execute
-    if (instruction_count == 0) {
-        printf("Warning: No instructions to execute\n");
+// Execute an assignment statement
+void execute_assignment(const ASTNode* node) {
+    if (node->data.compound.num_children < 2) {
+        fprintf(stderr, "Internal error: Assignment node missing children\n");
         return;
     }
     
-    if (debug_simulation) {
-        printf("DEBUG: Executing %d instructions\n", instruction_count);
+    ASTNode* lhs = node->data.compound.children[0];
+    ASTNode* rhs = node->data.compound.children[1];
+    
+    if (lhs->type != NODE_IDENTIFIER) {
+        fprintf(stderr, "Internal error: Assignment LHS is not an identifier\n");
+        return;
     }
     
-    int pc = 0;  // Program counter
-    int max_iterations = 1000; // Prevent infinite loops during development
-    int iteration_count = 0;
+    char* var_name = lhs->data.string_value;
+    int value = evaluate_expression(rhs);
     
-    while (pc < instruction_count && iteration_count < max_iterations) {
-        pc = execute_instruction(pc);
-        iteration_count++;
+    // Handle compound assignments
+    if (node->operator && strcmp(node->operator, ":=") != 0) {
+        int idx = find_symbol(var_name);
+        if (idx >= 0) {
+            if (!symbol_table[idx].initialized) {
+                fprintf(stderr, "Semantic error: Variable '%s' used before initialization.\n", var_name);
+                exit(1);
+            }
+            
+            int current = symbol_table[idx].value.int_val;
+            
+            if (strcmp(node->operator, "+=") == 0) {
+                value = current + value;
+            } else if (strcmp(node->operator, "-=") == 0) {
+                value = current - value;
+            } else if (strcmp(node->operator, "*=") == 0) {
+                value = current * value;
+            } else if (strcmp(node->operator, "/=") == 0) {
+                if (value == 0) {
+                    fprintf(stderr, "Semantic error: Division by zero\n");
+                    exit(1);
+                }
+                value = current / value;
+            } else if (strcmp(node->operator, "%=") == 0) {
+                if (value == 0) {
+                    fprintf(stderr, "Semantic error: Modulo by zero\n");
+                    exit(1);
+                }
+                value = current % value;
+            }
+        }
     }
     
-    if (iteration_count >= max_iterations) {
-        printf("\nWarning: Execution stopped after %d instructions - possible infinite loop\n", max_iterations);
+    set_int_value(var_name, value);
+}
+
+// Execute an if statement
+void execute_if(const ASTNode* node) {
+    if (node->data.compound.num_children < 2) {
+        fprintf(stderr, "Internal error: If node missing children\n");
+        return;
     }
     
-    printf("\n=== End of Program Output ===\n");
+    ASTNode* condition = node->data.compound.children[0];
+    ASTNode* true_block = node->data.compound.children[1];
+    ASTNode* false_block = NULL;
+    
+    if (node->data.compound.num_children > 2) {
+        false_block = node->data.compound.children[2];
+    }
+    
+    int cond_value = evaluate_expression(condition);
+    
+    if (cond_value) {
+        execute_node(true_block);
+    } else if (false_block) {
+        execute_node(false_block);
+    }
+}
+
+// Execute a while loop
+void execute_while(const ASTNode* node) {
+    if (node->data.compound.num_children < 2) {
+        fprintf(stderr, "Internal error: While node missing children\n");
+        return;
+    }
+    
+    ASTNode* condition = node->data.compound.children[0];
+    ASTNode* body = node->data.compound.children[1];
+    
+    int max_iterations = 10000; // Safety limit
+    int iteration = 0;
+    
+    while (evaluate_expression(condition)) {
+        execute_node(body);
+        
+        iteration++;
+        if (iteration >= max_iterations) {
+            fprintf(stderr, "Warning: Maximum iteration count reached, possible infinite loop\n");
+            break;
+        }
+    }
+}
+
+// Execute a for loop
+void execute_for(const ASTNode* node) {
+    if (node->data.compound.num_children < 4) {
+        fprintf(stderr, "Internal error: For node missing children\n");
+        return;
+    }
+    
+    ASTNode* init_assign = node->data.compound.children[0];
+    ASTNode* limit_expr = node->data.compound.children[1];
+    ASTNode* step_node = node->data.compound.children[2];
+    ASTNode* body = node->data.compound.children[3];
+    
+    // Execute initialization assignment
+    execute_assignment(init_assign);
+    
+    // Get loop variable from initial assignment
+    char* loop_var = init_assign->data.compound.children[0]->data.string_value;
+    
+    // Get step value and direction
+    int step_value = evaluate_expression(step_node->data.compound.children[0]);
+    int is_inc = strcmp(step_node->operator, "inc") == 0;
+    
+    int max_iterations = 10000; // Safety limit
+    int iteration = 0;
+    
+    while (1) {
+        // Get current loop variable value and limit
+        int current = get_int_value(init_assign->data.compound.children[0]);
+        int limit = evaluate_expression(limit_expr);
+        
+        if (debug_simulation) {
+            printf("DEBUG: For loop - %s=%d, limit=%d, step=%d, is_inc=%d\n", 
+                   loop_var, current, limit, step_value, is_inc);
+        }
+        
+        // Fix the termination condition for incrementing and decrementing loops
+        if ((is_inc && current > limit) || (!is_inc && current < limit)) {
+            break;
+        }
+        
+        // Execute the loop body
+        execute_node(body);
+        
+        // Update the loop variable
+        if (is_inc) {
+            set_int_value(loop_var, current + step_value);
+        } else {
+            set_int_value(loop_var, current - step_value);
+        }
+        
+        iteration++;
+        if (iteration >= max_iterations) {
+            fprintf(stderr, "Warning: Maximum iteration count reached, possible infinite loop\n");
+            break;
+        }
+    }
+}
+
+// Execute a print statement
+void execute_print(const ASTNode* node) {
+    if (node->data.compound.num_children == 0) {
+        fprintf(stderr, "Internal error: Print node missing children\n");
+        return;
+    }
+    
+    ASTNode* string_node = node->data.compound.children[0];
+    if (string_node->type != NODE_STRING_CONST) {
+        fprintf(stderr, "Internal error: Print first arg is not a string\n");
+        return;
+    }
+    
+    char* format = string_node->data.string_value;
+    
+    // If there are arguments, format the string
+    if (node->data.compound.num_children > 1) {
+        ASTNode* args_block = node->data.compound.children[1];
+        
+        int arg_count = args_block ? args_block->data.compound.num_children : 0;
+        int values[100]; // Support up to 100 arguments
+        
+        // Collect argument values
+        for (int i = 0; i < arg_count && i < 100; i++) {
+            ASTNode* arg = args_block->data.compound.children[i];
+            values[i] = evaluate_expression(arg);
+        }
+        
+        // Format the string with arguments
+        char* fmt_copy = strdup(format);
+        char output[1024] = {0};
+        char* out_ptr = output;
+        char* fmt_ptr = fmt_copy;
+        int val_idx = 0;
+        
+        while (*fmt_ptr) {
+            if (*fmt_ptr == '%' && *(fmt_ptr + 1) == 'd') {
+                if (val_idx < arg_count) {
+                    out_ptr += sprintf(out_ptr, "%d", values[val_idx++]);
+                } else {
+                    strcpy(out_ptr, "[ERROR:missing arg]");
+                    out_ptr += strlen("[ERROR:missing arg]");
+                }
+                fmt_ptr += 2; // Skip %d
+            } else {
+                *out_ptr++ = *fmt_ptr++;
+            }
+        }
+        *out_ptr = '\0';
+        
+        printf("%s\n", output);
+        free(fmt_copy);
+    } else {
+        // Just print the raw string
+        printf("%s\n", format);
+    }
+}
+
+// Execute a scan statement
+void execute_scan(const ASTNode* node) {
+    if (node->data.compound.num_children == 0) {
+        fprintf(stderr, "Internal error: Scan node missing children\n");
+        return;
+    }
+    
+    ASTNode* args_block = node->data.compound.children[0];
+    
+    // Check if there is a format string
+    ASTNode* prompt = NULL;
+    ASTNode* vars_block = args_block;
+    
+    if (args_block->data.compound.num_children > 0 && 
+        args_block->data.compound.children[0]->type == NODE_STRING_CONST) {
+        prompt = args_block->data.compound.children[0];
+        // If first child is a string, use the second child as vars_block
+        if (args_block->data.compound.num_children > 1) {
+            vars_block = args_block->data.compound.children[1];
+        } else {
+            vars_block = NULL;
+        }
+    }
+    
+    // Print the prompt if present
+    if (prompt) {
+        printf("%s", prompt->data.string_value);
+    }
+    
+    // Process each identifier
+    if (vars_block) {
+        for (int i = 0; i < vars_block->data.compound.num_children; i++) {
+            ASTNode* id_node = vars_block->data.compound.children[i];
+            if (id_node->type == NODE_IDENTIFIER) {
+                int value;
+                char* var_name = id_node->data.string_value;
+                
+                printf(" %s: ", var_name);
+                if (scanf("%d", &value) != 1) {
+                    fprintf(stderr, "Error reading input for variable %s\n", var_name);
+                    value = 0; // Default value on error
+                }
+                
+                set_int_value(var_name, value);
+            }
+        }
+    }
+}
+
+// Execute a block of statements
+void execute_block(const ASTNode* node) {
+    for (int i = 0; i < node->data.compound.num_children; i++) {
+        execute_node(node->data.compound.children[i]);
+    }
 }
 
 // Print symbol table
@@ -814,7 +726,7 @@ void print_symbol_table() {
 }
 
 
-#line 818 "myparser.tab.c"
+#line 730 "myparser.tab.c"
 
 # ifndef YY_CAST
 #  ifdef __cplusplus
@@ -845,95 +757,86 @@ enum yysymbol_kind_t
   YYSYMBOL_YYEOF = 0,                      /* "end of file"  */
   YYSYMBOL_YYerror = 1,                    /* error  */
   YYSYMBOL_YYUNDEF = 2,                    /* "invalid token"  */
-  YYSYMBOL_BEGIN_TOKEN = 3,                /* BEGIN_TOKEN  */
-  YYSYMBOL_END_TOKEN = 4,                  /* END_TOKEN  */
-  YYSYMBOL_PROGRAM = 5,                    /* PROGRAM  */
-  YYSYMBOL_VARDECL = 6,                    /* VARDECL  */
-  YYSYMBOL_IF = 7,                         /* IF  */
-  YYSYMBOL_ELSE = 8,                       /* ELSE  */
-  YYSYMBOL_WHILE = 9,                      /* WHILE  */
-  YYSYMBOL_FOR = 10,                       /* FOR  */
-  YYSYMBOL_TO = 11,                        /* TO  */
-  YYSYMBOL_INC = 12,                       /* INC  */
-  YYSYMBOL_DEC = 13,                       /* DEC  */
-  YYSYMBOL_DO = 14,                        /* DO  */
-  YYSYMBOL_PRINT = 15,                     /* PRINT  */
-  YYSYMBOL_SCAN = 16,                      /* SCAN  */
-  YYSYMBOL_INT_TYPE = 17,                  /* INT_TYPE  */
-  YYSYMBOL_CHAR_TYPE = 18,                 /* CHAR_TYPE  */
-  YYSYMBOL_MAIN = 19,                      /* MAIN  */
-  YYSYMBOL_ASSIGN = 20,                    /* ASSIGN  */
-  YYSYMBOL_PLUSEQ = 21,                    /* PLUSEQ  */
-  YYSYMBOL_MINUSEQ = 22,                   /* MINUSEQ  */
-  YYSYMBOL_MULEQ = 23,                     /* MULEQ  */
-  YYSYMBOL_DIVEQ = 24,                     /* DIVEQ  */
-  YYSYMBOL_MODEQ = 25,                     /* MODEQ  */
-  YYSYMBOL_SLCOMMENT = 26,                 /* SLCOMMENT  */
-  YYSYMBOL_MLCOMMENT = 27,                 /* MLCOMMENT  */
-  YYSYMBOL_COLON = 28,                     /* COLON  */
-  YYSYMBOL_SEMICOLON = 29,                 /* SEMICOLON  */
-  YYSYMBOL_COMMA = 30,                     /* COMMA  */
-  YYSYMBOL_LBRACKET = 31,                  /* LBRACKET  */
-  YYSYMBOL_RBRACKET = 32,                  /* RBRACKET  */
-  YYSYMBOL_QUOTE = 33,                     /* QUOTE  */
-  YYSYMBOL_DQUOTE = 34,                    /* DQUOTE  */
-  YYSYMBOL_AT = 35,                        /* AT  */
-  YYSYMBOL_OB = 36,                        /* OB  */
-  YYSYMBOL_CB = 37,                        /* CB  */
-  YYSYMBOL_MUL = 38,                       /* MUL  */
+  YYSYMBOL_DECIMAL = 3,                    /* DECIMAL  */
+  YYSYMBOL_IDENTIFIER = 4,                 /* IDENTIFIER  */
+  YYSYMBOL_STRING_LITERAL = 5,             /* STRING_LITERAL  */
+  YYSYMBOL_INT_TYPE = 6,                   /* INT_TYPE  */
+  YYSYMBOL_CHAR_TYPE = 7,                  /* CHAR_TYPE  */
+  YYSYMBOL_CHAR_LITERAL = 8,               /* CHAR_LITERAL  */
+  YYSYMBOL_BEGIN_TOKEN = 9,                /* BEGIN_TOKEN  */
+  YYSYMBOL_END_TOKEN = 10,                 /* END_TOKEN  */
+  YYSYMBOL_PROGRAM = 11,                   /* PROGRAM  */
+  YYSYMBOL_VARDECL = 12,                   /* VARDECL  */
+  YYSYMBOL_IF = 13,                        /* IF  */
+  YYSYMBOL_ELSE = 14,                      /* ELSE  */
+  YYSYMBOL_WHILE = 15,                     /* WHILE  */
+  YYSYMBOL_FOR = 16,                       /* FOR  */
+  YYSYMBOL_TO = 17,                        /* TO  */
+  YYSYMBOL_INC = 18,                       /* INC  */
+  YYSYMBOL_DEC = 19,                       /* DEC  */
+  YYSYMBOL_DO = 20,                        /* DO  */
+  YYSYMBOL_PRINT = 21,                     /* PRINT  */
+  YYSYMBOL_SCAN = 22,                      /* SCAN  */
+  YYSYMBOL_ASSIGN = 23,                    /* ASSIGN  */
+  YYSYMBOL_PLUSEQ = 24,                    /* PLUSEQ  */
+  YYSYMBOL_MINUSEQ = 25,                   /* MINUSEQ  */
+  YYSYMBOL_MULEQ = 26,                     /* MULEQ  */
+  YYSYMBOL_DIVEQ = 27,                     /* DIVEQ  */
+  YYSYMBOL_MODEQ = 28,                     /* MODEQ  */
+  YYSYMBOL_SLCOMMENT = 29,                 /* SLCOMMENT  */
+  YYSYMBOL_MLCOMMENT = 30,                 /* MLCOMMENT  */
+  YYSYMBOL_COLON = 31,                     /* COLON  */
+  YYSYMBOL_SEMICOLON = 32,                 /* SEMICOLON  */
+  YYSYMBOL_COMMA = 33,                     /* COMMA  */
+  YYSYMBOL_LBRACKET = 34,                  /* LBRACKET  */
+  YYSYMBOL_RBRACKET = 35,                  /* RBRACKET  */
+  YYSYMBOL_QUOTE = 36,                     /* QUOTE  */
+  YYSYMBOL_DQUOTE = 37,                    /* DQUOTE  */
+  YYSYMBOL_AT = 38,                        /* AT  */
   YYSYMBOL_ADD = 39,                       /* ADD  */
   YYSYMBOL_SUB = 40,                       /* SUB  */
-  YYSYMBOL_DIV = 41,                       /* DIV  */
-  YYSYMBOL_MOD = 42,                       /* MOD  */
-  YYSYMBOL_EQ = 43,                        /* EQ  */
-  YYSYMBOL_GT = 44,                        /* GT  */
-  YYSYMBOL_LT = 45,                        /* LT  */
-  YYSYMBOL_GE = 46,                        /* GE  */
-  YYSYMBOL_LE = 47,                        /* LE  */
-  YYSYMBOL_NE = 48,                        /* NE  */
-  YYSYMBOL_AND = 49,                       /* AND  */
-  YYSYMBOL_OR = 50,                        /* OR  */
-  YYSYMBOL_NOT = 51,                       /* NOT  */
-  YYSYMBOL_DECIMAL = 52,                   /* DECIMAL  */
-  YYSYMBOL_DOUBLE = 53,                    /* DOUBLE  */
-  YYSYMBOL_IDENTIFIER = 54,                /* IDENTIFIER  */
-  YYSYMBOL_STRING_LITERAL = 55,            /* STRING_LITERAL  */
-  YYSYMBOL_CHAR_LITERAL = 56,              /* CHAR_LITERAL  */
-  YYSYMBOL_INTEGER_CONST = 57,             /* INTEGER_CONST  */
-  YYSYMBOL_LOWER_THAN_ELSE = 58,           /* LOWER_THAN_ELSE  */
-  YYSYMBOL_YYACCEPT = 59,                  /* $accept  */
-  YYSYMBOL_program = 60,                   /* program  */
-  YYSYMBOL_statementBlock = 61,            /* statementBlock  */
-  YYSYMBOL_statement = 62,                 /* statement  */
-  YYSYMBOL_assignment = 63,                /* assignment  */
-  YYSYMBOL_assignment_op = 64,             /* assignment_op  */
-  YYSYMBOL_while_loop = 65,                /* while_loop  */
-  YYSYMBOL_66_1 = 66,                      /* $@1  */
-  YYSYMBOL_for_stmt = 67,                  /* for_stmt  */
-  YYSYMBOL_68_2 = 68,                      /* $@2  */
-  YYSYMBOL_if_cond = 69,                   /* if_cond  */
-  YYSYMBOL_70_3 = 70,                      /* $@3  */
-  YYSYMBOL_71_4 = 71,                      /* $@4  */
-  YYSYMBOL_expression = 72,                /* expression  */
-  YYSYMBOL_term = 73,                      /* term  */
-  YYSYMBOL_factor = 74,                    /* factor  */
-  YYSYMBOL_identifier = 75,                /* identifier  */
-  YYSYMBOL_bool_expr = 76,                 /* bool_expr  */
-  YYSYMBOL_condition = 77,                 /* condition  */
-  YYSYMBOL_relop = 78,                     /* relop  */
-  YYSYMBOL_block = 79,                     /* block  */
-  YYSYMBOL_for_step = 80,                  /* for_step  */
-  YYSYMBOL_for_dir = 81,                   /* for_dir  */
-  YYSYMBOL_print = 82,                     /* print  */
-  YYSYMBOL_scan = 83,                      /* scan  */
-  YYSYMBOL_formatArgs = 84,                /* formatArgs  */
-  YYSYMBOL_argList = 85,                   /* argList  */
-  YYSYMBOL_value = 86,                     /* value  */
-  YYSYMBOL_varDecBlock = 87,               /* varDecBlock  */
-  YYSYMBOL_VarDecList = 88,                /* VarDecList  */
-  YYSYMBOL_VarDeclaration = 89,            /* VarDeclaration  */
-  YYSYMBOL_arrayDec = 90,                  /* arrayDec  */
-  YYSYMBOL_type = 91                       /* type  */
+  YYSYMBOL_MUL = 41,                       /* MUL  */
+  YYSYMBOL_DIV = 42,                       /* DIV  */
+  YYSYMBOL_MOD = 43,                       /* MOD  */
+  YYSYMBOL_EQ = 44,                        /* EQ  */
+  YYSYMBOL_GT = 45,                        /* GT  */
+  YYSYMBOL_LT = 46,                        /* LT  */
+  YYSYMBOL_GE = 47,                        /* GE  */
+  YYSYMBOL_LE = 48,                        /* LE  */
+  YYSYMBOL_NE = 49,                        /* NE  */
+  YYSYMBOL_OB = 50,                        /* OB  */
+  YYSYMBOL_CB = 51,                        /* CB  */
+  YYSYMBOL_YYACCEPT = 52,                  /* $accept  */
+  YYSYMBOL_program = 53,                   /* program  */
+  YYSYMBOL_condition = 54,                 /* condition  */
+  YYSYMBOL_comment = 55,                   /* comment  */
+  YYSYMBOL_statementBlock = 56,            /* statementBlock  */
+  YYSYMBOL_statement = 57,                 /* statement  */
+  YYSYMBOL_assignment = 58,                /* assignment  */
+  YYSYMBOL_expression = 59,                /* expression  */
+  YYSYMBOL_term = 60,                      /* term  */
+  YYSYMBOL_factor = 61,                    /* factor  */
+  YYSYMBOL_block = 62,                     /* block  */
+  YYSYMBOL_if_cond = 63,                   /* if_cond  */
+  YYSYMBOL_while_loop = 64,                /* while_loop  */
+  YYSYMBOL_for_loop = 65,                  /* for_loop  */
+  YYSYMBOL_print = 66,                     /* print  */
+  YYSYMBOL_formatArgs = 67,                /* formatArgs  */
+  YYSYMBOL_argList = 68,                   /* argList  */
+  YYSYMBOL_value = 69,                     /* value  */
+  YYSYMBOL_scan = 70,                      /* scan  */
+  YYSYMBOL_scanArgs = 71,                  /* scanArgs  */
+  YYSYMBOL_identifierList = 72,            /* identifierList  */
+  YYSYMBOL_identifierListT = 73,           /* identifierListT  */
+  YYSYMBOL_assignment_op = 74,             /* assignment_op  */
+  YYSYMBOL_relop = 75,                     /* relop  */
+  YYSYMBOL_arrIndex = 76,                  /* arrIndex  */
+  YYSYMBOL_varDecBlock = 77,               /* varDecBlock  */
+  YYSYMBOL_VarDecList = 78,                /* VarDecList  */
+  YYSYMBOL_VarDeclaration = 79,            /* VarDeclaration  */
+  YYSYMBOL_arrayDec = 80,                  /* arrayDec  */
+  YYSYMBOL_type = 81,                      /* type  */
+  YYSYMBOL_integerConst = 82               /* integerConst  */
 };
 typedef enum yysymbol_kind_t yysymbol_kind_t;
 
@@ -1259,21 +1162,21 @@ union yyalloc
 #endif /* !YYCOPY_NEEDED */
 
 /* YYFINAL -- State number of the termination state.  */
-#define YYFINAL  4
+#define YYFINAL  5
 /* YYLAST -- Last index in YYTABLE.  */
-#define YYLAST   137
+#define YYLAST   178
 
 /* YYNTOKENS -- Number of terminals.  */
-#define YYNTOKENS  59
+#define YYNTOKENS  52
 /* YYNNTS -- Number of nonterminals.  */
-#define YYNNTS  33
+#define YYNNTS  31
 /* YYNRULES -- Number of rules.  */
 #define YYNRULES  71
 /* YYNSTATES -- Number of states.  */
-#define YYNSTATES  143
+#define YYNSTATES  154
 
 /* YYMAXUTOK -- Last valid token kind.  */
-#define YYMAXUTOK   313
+#define YYMAXUTOK   306
 
 
 /* YYTRANSLATE(TOKEN-NUM) -- Symbol number corresponding to TOKEN-NUM
@@ -1317,22 +1220,21 @@ static const yytype_int8 yytranslate[] =
       15,    16,    17,    18,    19,    20,    21,    22,    23,    24,
       25,    26,    27,    28,    29,    30,    31,    32,    33,    34,
       35,    36,    37,    38,    39,    40,    41,    42,    43,    44,
-      45,    46,    47,    48,    49,    50,    51,    52,    53,    54,
-      55,    56,    57,    58
+      45,    46,    47,    48,    49,    50,    51
 };
 
 #if YYDEBUG
 /* YYRLINE[YYN] -- Source line where rule number YYN was defined.  */
 static const yytype_int16 yyrline[] =
 {
-       0,   786,   786,   789,   796,   797,   801,   802,   803,   804,
-     805,   806,   807,   808,   812,   826,   827,   828,   829,   830,
-     831,   836,   835,   856,   855,   907,   914,   906,   928,   929,
-     933,   940,   941,   945,   949,   956,   957,   958,   959,   963,
-     973,   974,   978,   982,   989,   997,   998,   999,  1000,  1001,
-    1002,  1006,  1010,  1014,  1015,  1020,  1032,  1040,  1041,  1045,
-    1046,  1055,  1056,  1057,  1062,  1066,  1067,  1071,  1107,  1108,
-    1112,  1113
+       0,   692,   692,   700,   706,   715,   721,   724,   727,   733,
+     736,   744,   747,   750,   753,   756,   759,   762,   768,   785,
+     786,   792,   798,   804,   810,   819,   823,   824,   835,   836,
+     843,   847,   852,   861,   869,   893,   920,   931,   932,   936,
+     940,   947,   957,   961,   968,   969,   980,   996,   997,  1013,
+    1014,  1015,  1016,  1017,  1018,  1022,  1023,  1024,  1025,  1026,
+    1027,  1031,  1032,  1036,  1043,  1047,  1054,  1078,  1079,  1087,
+    1092,  1101
 };
 #endif
 
@@ -1348,21 +1250,19 @@ static const char *yysymbol_name (yysymbol_kind_t yysymbol) YY_ATTRIBUTE_UNUSED;
    First, the terminals, then, starting at YYNTOKENS, nonterminals.  */
 static const char *const yytname[] =
 {
-  "\"end of file\"", "error", "\"invalid token\"", "BEGIN_TOKEN",
-  "END_TOKEN", "PROGRAM", "VARDECL", "IF", "ELSE", "WHILE", "FOR", "TO",
-  "INC", "DEC", "DO", "PRINT", "SCAN", "INT_TYPE", "CHAR_TYPE", "MAIN",
-  "ASSIGN", "PLUSEQ", "MINUSEQ", "MULEQ", "DIVEQ", "MODEQ", "SLCOMMENT",
-  "MLCOMMENT", "COLON", "SEMICOLON", "COMMA", "LBRACKET", "RBRACKET",
-  "QUOTE", "DQUOTE", "AT", "OB", "CB", "MUL", "ADD", "SUB", "DIV", "MOD",
-  "EQ", "GT", "LT", "GE", "LE", "NE", "AND", "OR", "NOT", "DECIMAL",
-  "DOUBLE", "IDENTIFIER", "STRING_LITERAL", "CHAR_LITERAL",
-  "INTEGER_CONST", "LOWER_THAN_ELSE", "$accept", "program",
-  "statementBlock", "statement", "assignment", "assignment_op",
-  "while_loop", "$@1", "for_stmt", "$@2", "if_cond", "$@3", "$@4",
-  "expression", "term", "factor", "identifier", "bool_expr", "condition",
-  "relop", "block", "for_step", "for_dir", "print", "scan", "formatArgs",
-  "argList", "value", "varDecBlock", "VarDecList", "VarDeclaration",
-  "arrayDec", "type", YY_NULLPTR
+  "\"end of file\"", "error", "\"invalid token\"", "DECIMAL",
+  "IDENTIFIER", "STRING_LITERAL", "INT_TYPE", "CHAR_TYPE", "CHAR_LITERAL",
+  "BEGIN_TOKEN", "END_TOKEN", "PROGRAM", "VARDECL", "IF", "ELSE", "WHILE",
+  "FOR", "TO", "INC", "DEC", "DO", "PRINT", "SCAN", "ASSIGN", "PLUSEQ",
+  "MINUSEQ", "MULEQ", "DIVEQ", "MODEQ", "SLCOMMENT", "MLCOMMENT", "COLON",
+  "SEMICOLON", "COMMA", "LBRACKET", "RBRACKET", "QUOTE", "DQUOTE", "AT",
+  "ADD", "SUB", "MUL", "DIV", "MOD", "EQ", "GT", "LT", "GE", "LE", "NE",
+  "OB", "CB", "$accept", "program", "condition", "comment",
+  "statementBlock", "statement", "assignment", "expression", "term",
+  "factor", "block", "if_cond", "while_loop", "for_loop", "print",
+  "formatArgs", "argList", "value", "scan", "scanArgs", "identifierList",
+  "identifierListT", "assignment_op", "relop", "arrIndex", "varDecBlock",
+  "VarDecList", "VarDeclaration", "arrayDec", "type", "integerConst", YY_NULLPTR
 };
 
 static const char *
@@ -1372,7 +1272,7 @@ yysymbol_name (yysymbol_kind_t yysymbol)
 }
 #endif
 
-#define YYPACT_NINF (-95)
+#define YYPACT_NINF (-85)
 
 #define yypact_value_is_default(Yyn) \
   ((Yyn) == YYPACT_NINF)
@@ -1384,23 +1284,24 @@ yysymbol_name (yysymbol_kind_t yysymbol)
 
 /* YYPACT[STATE-NUM] -- Index in YYTABLE of the portion describing
    STATE-NUM.  */
-static const yytype_int8 yypact[] =
+static const yytype_int16 yypact[] =
 {
-      19,     6,    42,    10,   -95,    30,    57,     5,    49,     5,
-      48,    52,    24,    56,    62,   -95,    45,     5,    70,    71,
-      72,    73,    33,    74,   -95,   -95,    68,   101,    -6,    -6,
-      86,    53,    54,   -95,   102,   -95,   -95,   -95,   -95,   -95,
-     -95,   -95,   -95,   -95,   -95,   -95,   -17,   -95,    58,   106,
-      68,   -95,   -17,    -6,   -95,   -95,    27,    38,   -95,   -95,
-     -24,   -95,    15,   -17,    81,    84,   -95,   -11,    85,   109,
-     -95,    50,   -95,   -17,   -17,   -95,   -95,   -95,   -95,   -95,
-     -95,   -17,   -17,   -17,   -17,   -95,    -6,    -6,   103,    -5,
-      37,    82,    37,    66,    90,   -95,   -95,    38,    38,   -11,
-     -95,   -95,   -95,   118,   -95,    75,   -95,   -17,   -95,   -95,
-     -95,   -95,    92,    94,    88,    95,    51,   -95,   118,     4,
-      37,   -95,    97,   -95,   -95,   -95,    91,   121,   -95,   -95,
-     -95,   -17,   -95,   -95,   104,   118,   -11,   116,   -95,   -95,
-     -95,   118,   -95
+       0,   -85,   -85,    21,    22,   -85,    31,     2,    35,    34,
+      96,    25,   101,    96,    10,    53,   100,    58,    60,    97,
+      96,    74,   -85,   -85,   -85,   -85,   -85,   -85,     0,   -85,
+     -85,   -85,   -85,   -85,   -85,     4,   103,     4,     4,    91,
+     110,    57,   105,   -85,   -85,    87,   104,   -85,     1,    93,
+     -85,   -85,   -85,   -85,    79,    45,    88,     4,   107,   108,
+     109,    92,   -85,     0,   140,   -15,   -85,     4,   -85,   112,
+      80,     4,     4,     4,     4,     4,   137,   -85,   -85,   -85,
+     -85,   -85,   -85,     3,   127,    24,    -3,    98,   144,   -85,
+     146,   119,   -85,   118,   143,   -85,   -16,   151,   -85,   -25,
+     -25,   -85,   -85,   -85,    -4,   -85,    93,   137,     4,   -85,
+     152,   -85,   123,   -85,   125,   108,   -85,   -85,   155,   126,
+     148,   -85,   111,   137,   -85,   129,    40,    -3,   -85,   -85,
+     128,    71,   -85,   -85,   132,   -85,     4,     4,   -85,   -85,
+     -85,   -85,   114,   -85,    29,    56,   134,   137,   137,   -85,
+     135,   136,   -85,   -85
 };
 
 /* YYDEFACT[STATE-NUM] -- Default reduction number in state STATE-NUM.
@@ -1408,39 +1309,40 @@ static const yytype_int8 yypact[] =
    means the default is an error.  */
 static const yytype_int8 yydefact[] =
 {
-       0,     0,     0,     0,     1,     0,     0,     4,     0,     4,
-       0,     0,     0,     0,     0,    39,     0,     4,     0,     0,
-       0,     0,     0,    12,    10,    11,     0,     0,     0,     0,
-       0,     0,     0,     3,     0,     5,     6,     8,     9,     7,
-      15,    16,    17,    18,    19,    20,     0,    13,     0,     0,
-      65,    51,     0,     0,    38,    37,     0,    28,    31,    36,
-       0,    40,     0,     0,    57,     0,     2,    14,    68,     0,
-      66,     0,    43,     0,     0,    45,    47,    49,    48,    50,
-      46,     0,     0,     0,     0,    25,     0,     0,     0,     0,
-       0,     0,     0,     0,     0,    64,    35,    29,    30,    44,
-      32,    33,    34,     0,    41,    42,    21,     0,    63,    62,
-      61,    58,    59,     0,     0,     0,     0,    26,     0,     0,
-       0,    55,     0,    69,    70,    71,     0,     0,    22,    53,
-      54,     0,    60,    56,     0,     0,    52,     0,    67,    27,
-      23,     0,    24
+       8,     6,     7,     0,     0,     1,     0,     0,     0,     0,
+       9,     0,     0,     9,     0,     0,     0,     0,     0,     0,
+       9,     0,    17,    12,    13,    14,    15,    16,     8,    49,
+      50,    51,    52,    53,    54,     0,     0,     0,     0,     0,
+       0,     0,     0,    10,    11,     0,    61,    29,     0,    18,
+      19,    25,    28,    30,     0,     5,     0,     0,    37,    47,
+       0,     0,    44,     8,     0,     8,    64,     0,    27,     0,
+       0,     0,     0,     0,     0,     0,     0,    55,    57,    59,
+      56,    58,    60,     0,     0,     0,     0,     0,     0,    46,
+       0,     0,     2,    67,     0,    65,     0,     0,    26,    20,
+      21,    22,    23,    24,     0,     4,     3,     0,     0,    41,
+       0,    38,    39,    42,     0,    47,    45,    43,     0,     0,
+       0,    62,     0,     0,    31,     0,     0,     0,    36,    48,
+       0,     0,    63,    71,     0,    33,     0,     0,    40,    68,
+      69,    70,     0,    32,     0,     0,     0,     0,     0,    66,
+       0,     0,    34,    35
 };
 
 /* YYPGOTO[NTERM-NUM].  */
-static const yytype_int8 yypgoto[] =
+static const yytype_int16 yypgoto[] =
 {
-     -95,   -95,    14,   -95,   -95,   -95,   -95,   -95,   -95,   -95,
-     -95,   -95,   -95,   -45,     8,    13,    -7,   -26,   -95,   -95,
-     -94,   -95,   -95,   -95,   -95,   -95,   -88,   -95,   -95,    87,
-     -95,   -95,   -95
+     -85,   -85,   131,    -8,    32,   -85,   -85,   -35,   -85,   -85,
+     -73,   -85,   -85,   -85,   -85,   -85,    43,   -85,   -85,   -85,
+      81,    59,   -85,   -85,   -85,   -85,   -85,   113,   -85,   -85,
+     -84
 };
 
 /* YYDEFGOTO[NTERM-NUM].  */
 static const yytype_uint8 yydefgoto[] =
 {
-       0,     2,    16,    17,    18,    46,    19,   118,    20,   141,
-      21,   103,   127,    56,    57,    58,    59,    60,    61,    81,
-      23,   137,   131,    24,    25,    91,   111,   112,     7,    49,
-      50,    94,   126
+       0,     3,    54,     4,    19,    20,    21,    55,    50,    51,
+      22,    23,    24,    25,    26,    87,   111,   112,    27,    61,
+      62,    89,    35,    83,    68,    10,    65,    66,   119,   142,
+      52
 };
 
 /* YYTABLE[YYPACT[STATE-NUM]] -- What to do in state STATE-NUM.  If
@@ -1448,85 +1350,94 @@ static const yytype_uint8 yydefgoto[] =
    number is the opposite.  If YYTABLE_NINF, syntax error.  */
 static const yytype_uint8 yytable[] =
 {
-      22,    67,    22,    62,   114,    30,   107,    71,     9,   117,
-      22,     3,    10,    85,    11,    12,   129,   130,    89,    52,
-      13,    14,     1,    27,   128,    86,    87,    72,    73,    74,
-      52,    35,   132,     6,    73,    74,    99,    15,     5,    54,
-      55,   139,     4,    73,    74,    53,    33,   142,    15,    34,
-      54,    55,    88,    40,    41,    42,    43,    44,    45,    15,
-     104,   105,   119,     8,    86,    87,    73,    74,   124,   125,
-      75,    76,    77,    78,    79,    80,    82,    26,    15,    83,
-      84,    97,    98,   110,    28,   110,   136,    96,    29,    73,
-      74,    15,    31,   108,   109,   100,   101,   102,    32,    36,
-      37,    38,    39,    47,    48,    51,    63,    66,    64,    65,
-      69,    90,    68,   110,    92,    95,    93,   106,   115,   113,
-     116,     9,   120,   121,    86,   122,   133,   123,   134,   135,
-     140,     0,     0,   138,     0,     0,     0,    70
+      49,   109,   113,   104,    69,    46,   105,    46,    46,    47,
+     123,    47,    47,    70,     1,     2,    73,    74,    75,   121,
+      45,     5,    85,    71,    72,    73,    74,    75,   124,     1,
+       2,     6,    96,     8,   125,    64,    99,   100,   101,   102,
+     103,   108,     7,   113,     9,    36,    11,   110,   106,   147,
+     134,    48,    43,    48,    48,    92,    28,    94,   136,   137,
+      37,    59,    60,    71,    72,    73,    74,    75,    71,    72,
+      73,    74,    75,   126,   150,   151,   148,   140,   141,    71,
+      72,    73,    74,    75,    71,    72,    73,    74,    75,    77,
+      78,    79,    80,    81,    82,    71,    72,    73,    74,    75,
+      12,   144,   145,    38,    39,    13,    44,    42,    40,    14,
+      41,    15,    16,    53,    57,    58,    63,    17,    18,    71,
+      72,    73,    74,    75,    29,    30,    31,    32,    33,    34,
+      76,    98,    71,    72,    73,    74,    75,    64,    67,    84,
+      86,    88,    90,    91,    93,    97,    13,   107,   115,   114,
+      59,   117,   118,   120,   122,    69,   127,   128,   130,   131,
+     132,   135,   133,   139,   143,   146,   149,   152,   153,    56,
+     138,   116,     0,     0,   129,     0,     0,     0,    95
 };
 
 static const yytype_int16 yycheck[] =
 {
-       7,    46,     9,    29,    92,    12,    11,    52,     3,   103,
-      17,     5,     7,    37,     9,    10,    12,    13,    63,    36,
-      15,    16,     3,     9,   118,    49,    50,    53,    39,    40,
-      36,    17,   120,     3,    39,    40,    81,    54,    28,    56,
-      57,   135,     0,    39,    40,    51,     1,   141,    54,     4,
-      56,    57,    37,    20,    21,    22,    23,    24,    25,    54,
-      86,    87,   107,     6,    49,    50,    39,    40,    17,    18,
-      43,    44,    45,    46,    47,    48,    38,    28,    54,    41,
-      42,    73,    74,    90,    36,    92,   131,    37,    36,    39,
-      40,    54,    36,    56,    57,    82,    83,    84,    36,    29,
-      29,    29,    29,    29,    36,     4,    20,     5,    55,    55,
-       4,    30,    54,   120,    30,     6,    31,    14,    52,    37,
-      30,     3,    30,    29,    49,    37,    29,    32,    37,     8,
-      14,    -1,    -1,    29,    -1,    -1,    -1,    50
+      35,     4,    86,    76,     3,     4,     3,     4,     4,     8,
+      14,     8,     8,    48,    29,    30,    41,    42,    43,    35,
+      28,     0,    57,    39,    40,    41,    42,    43,    32,    29,
+      30,     9,    67,    31,   107,    50,    71,    72,    73,    74,
+      75,    17,    11,   127,     9,    13,    12,    50,    83,    20,
+     123,    50,    20,    50,    50,    63,    31,    65,    18,    19,
+      50,     4,     5,    39,    40,    41,    42,    43,    39,    40,
+      41,    42,    43,   108,   147,   148,    20,     6,     7,    39,
+      40,    41,    42,    43,    39,    40,    41,    42,    43,    44,
+      45,    46,    47,    48,    49,    39,    40,    41,    42,    43,
+       4,   136,   137,    50,     4,     9,    32,    10,    50,    13,
+      50,    15,    16,    10,    23,     5,    11,    21,    22,    39,
+      40,    41,    42,    43,    23,    24,    25,    26,    27,    28,
+      51,    51,    39,    40,    41,    42,    43,    50,    34,    51,
+      33,    33,    33,    51,     4,    33,     9,    20,     4,    51,
+       4,    32,    34,    10,     3,     3,    33,    32,     3,    33,
+      12,    32,    51,    35,    32,    51,    32,    32,    32,    38,
+     127,    90,    -1,    -1,   115,    -1,    -1,    -1,    65
 };
 
 /* YYSTOS[STATE-NUM] -- The symbol kind of the accessing symbol of
    state STATE-NUM.  */
 static const yytype_int8 yystos[] =
 {
-       0,     3,    60,     5,     0,    28,     3,    87,     6,     3,
-       7,     9,    10,    15,    16,    54,    61,    62,    63,    65,
-      67,    69,    75,    79,    82,    83,    28,    61,    36,    36,
-      75,    36,    36,     1,     4,    61,    29,    29,    29,    29,
-      20,    21,    22,    23,    24,    25,    64,    29,    36,    88,
-      89,     4,    36,    51,    56,    57,    72,    73,    74,    75,
-      76,    77,    76,    20,    55,    55,     5,    72,    54,     4,
-      88,    72,    76,    39,    40,    43,    44,    45,    46,    47,
-      48,    78,    38,    41,    42,    37,    49,    50,    37,    72,
-      30,    84,    30,    31,    90,     6,    37,    73,    73,    72,
-      74,    74,    74,    70,    76,    76,    14,    11,    56,    57,
-      75,    85,    86,    37,    85,    52,    30,    79,    66,    72,
-      30,    29,    37,    32,    17,    18,    91,    71,    79,    12,
-      13,    81,    85,    29,    37,     8,    72,    80,    29,    79,
-      14,    68,    79
+       0,    29,    30,    53,    55,     0,     9,    11,    31,     9,
+      77,    12,     4,     9,    13,    15,    16,    21,    22,    56,
+      57,    58,    62,    63,    64,    65,    66,    70,    31,    23,
+      24,    25,    26,    27,    28,    74,    56,    50,    50,     4,
+      50,    50,    10,    56,    32,    55,     4,     8,    50,    59,
+      60,    61,    82,    10,    54,    59,    54,    23,     5,     4,
+       5,    71,    72,    11,    50,    78,    79,    34,    76,     3,
+      59,    39,    40,    41,    42,    43,    51,    44,    45,    46,
+      47,    48,    49,    75,    51,    59,    33,    67,    33,    73,
+      33,    51,    55,     4,    55,    79,    59,    33,    51,    59,
+      59,    59,    59,    59,    62,     3,    59,    20,    17,     4,
+      50,    68,    69,    82,    51,     4,    72,    32,    34,    80,
+      10,    35,     3,    14,    32,    62,    59,    33,    32,    73,
+       3,    33,    12,    51,    62,    32,    18,    19,    68,    35,
+       6,     7,    81,    32,    59,    59,    51,    20,    20,    32,
+      62,    62,    32,    32
 };
 
 /* YYR1[RULE-NUM] -- Symbol kind of the left-hand side of rule RULE-NUM.  */
 static const yytype_int8 yyr1[] =
 {
-       0,    59,    60,    60,    61,    61,    62,    62,    62,    62,
-      62,    62,    62,    62,    63,    64,    64,    64,    64,    64,
-      64,    66,    65,    68,    67,    70,    71,    69,    72,    72,
-      72,    73,    73,    73,    73,    74,    74,    74,    74,    75,
-      76,    76,    76,    76,    77,    78,    78,    78,    78,    78,
-      78,    79,    80,    81,    81,    82,    83,    84,    84,    85,
-      85,    86,    86,    86,    87,    88,    88,    89,    90,    90,
-      91,    91
+       0,    52,    53,    54,    54,    54,    55,    55,    55,    56,
+      56,    57,    57,    57,    57,    57,    57,    57,    58,    59,
+      59,    59,    59,    59,    59,    60,    61,    61,    61,    61,
+      62,    63,    63,    64,    65,    65,    66,    67,    67,    68,
+      68,    69,    69,    70,    71,    71,    72,    73,    73,    74,
+      74,    74,    74,    74,    74,    75,    75,    75,    75,    75,
+      75,    76,    76,    77,    78,    78,    79,    80,    80,    81,
+      81,    82
 };
 
 /* YYR2[RULE-NUM] -- Number of symbols on the right-hand side of rule RULE-NUM.  */
 static const yytype_int8 yyr2[] =
 {
-       0,     2,     7,     6,     0,     2,     2,     2,     2,     2,
-       1,     1,     1,     2,     3,     1,     1,     1,     1,     1,
-       1,     0,     7,     0,    11,     0,     0,     9,     1,     3,
-       3,     1,     3,     3,     3,     3,     1,     1,     1,     1,
-       1,     3,     3,     2,     3,     1,     1,     1,     1,     1,
-       1,     3,     1,     1,     1,     6,     7,     0,     2,     1,
-       3,     1,     1,     1,     6,     1,     2,     7,     0,     3,
-       1,     1
+       0,     2,     9,     3,     3,     1,     1,     1,     0,     0,
+       2,     2,     1,     1,     1,     1,     1,     1,     3,     1,
+       3,     3,     3,     3,     3,     1,     3,     2,     1,     1,
+       3,     6,     8,     7,    11,    11,     6,     0,     2,     1,
+       3,     1,     1,     5,     1,     3,     2,     0,     3,     1,
+       1,     1,     1,     1,     1,     1,     1,     1,     1,     1,
+       1,     0,     3,     8,     1,     2,     7,     0,     3,     1,
+       1,     5
 };
 
 
@@ -1989,487 +1900,699 @@ yyreduce:
   YY_REDUCE_PRINT (yyn);
   switch (yyn)
     {
-  case 2: /* program: BEGIN_TOKEN PROGRAM COLON varDecBlock statementBlock END_TOKEN PROGRAM  */
-#line 786 "myparser.y"
-                                                                             {
-        printf("Parsing and TAC generation completed successfully.\n");
+  case 2: /* program: comment BEGIN_TOKEN PROGRAM COLON varDecBlock statementBlock END_TOKEN PROGRAM comment  */
+#line 692 "myparser.y"
+                                                                                             {
+        ast_root = create_node(NODE_PROGRAM);
+        add_child(ast_root, (yyvsp[-4].node));
+        add_child(ast_root, (yyvsp[-3].node));
     }
-#line 1998 "myparser.tab.c"
+#line 1911 "myparser.tab.c"
     break;
 
-  case 3: /* program: BEGIN_TOKEN PROGRAM COLON varDecBlock statementBlock error  */
-#line 789 "myparser.y"
-                                                                 {
-        printf("Warning: Syntax error near the end of the program. TAC generation may be incomplete.\n");
-        yyerrok;
+  case 3: /* condition: expression relop expression  */
+#line 700 "myparser.y"
+                                  {
+        (yyval.node) = create_node(NODE_RELOP);
+        (yyval.node)->operator = (yyvsp[-1].string);
+        add_child((yyval.node), (yyvsp[-2].node));
+        add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2007 "myparser.tab.c"
+#line 1922 "myparser.tab.c"
     break;
 
-  case 14: /* assignment: identifier assignment_op expression  */
-#line 812 "myparser.y"
-                                          {
-        if (strcmp((yyvsp[-1].sval), ":=") == 0) {
-            emit((yyvsp[-2].sval), (yyvsp[0].sval), NULL, NULL);
-        } else {
-            char* baseOp = getBaseOperator((yyvsp[-1].sval));
-            char* temp = newTemp();
-            emit(temp, (yyvsp[-2].sval), baseOp, (yyvsp[0].sval));
-            emit((yyvsp[-2].sval), temp, NULL, NULL);
-        }
-        (yyval.sval) = strdup((yyvsp[-2].sval)); track_allocation((yyval.sval));
+  case 4: /* condition: expression relop DECIMAL  */
+#line 706 "myparser.y"
+                               {
+        (yyval.node) = create_node(NODE_RELOP);
+        (yyval.node)->operator = (yyvsp[-1].string);
+        add_child((yyval.node), (yyvsp[-2].node));
+        ASTNode* num = create_node(NODE_INT_CONST);
+        num->data.int_const.int_value = (yyvsp[0].int_val);
+        num->data.int_const.base = 10;
+        add_child((yyval.node), num);
     }
-#line 2023 "myparser.tab.c"
+#line 1936 "myparser.tab.c"
     break;
 
-  case 15: /* assignment_op: ASSIGN  */
-#line 826 "myparser.y"
-              { (yyval.sval) = strdup(":="); track_allocation((yyval.sval)); }
-#line 2029 "myparser.tab.c"
-    break;
-
-  case 16: /* assignment_op: PLUSEQ  */
-#line 827 "myparser.y"
-              { (yyval.sval) = strdup("+="); track_allocation((yyval.sval)); }
-#line 2035 "myparser.tab.c"
-    break;
-
-  case 17: /* assignment_op: MINUSEQ  */
-#line 828 "myparser.y"
-              { (yyval.sval) = strdup("-="); track_allocation((yyval.sval)); }
-#line 2041 "myparser.tab.c"
-    break;
-
-  case 18: /* assignment_op: MULEQ  */
-#line 829 "myparser.y"
-              { (yyval.sval) = strdup("*="); track_allocation((yyval.sval)); }
-#line 2047 "myparser.tab.c"
-    break;
-
-  case 19: /* assignment_op: DIVEQ  */
-#line 830 "myparser.y"
-              { (yyval.sval) = strdup("/="); track_allocation((yyval.sval)); }
-#line 2053 "myparser.tab.c"
-    break;
-
-  case 20: /* assignment_op: MODEQ  */
-#line 831 "myparser.y"
-              { (yyval.sval) = strdup("%="); track_allocation((yyval.sval)); }
-#line 2059 "myparser.tab.c"
-    break;
-
-  case 21: /* $@1: %empty  */
-#line 836 "myparser.y"
-      {
-        /* 1) at "do", generate labels & test */
-        char* start = newLabel();  track_allocation(start);
-        char* end   = newLabel();  track_allocation(end);
-        current_loop_start = start;
-        current_loop_end   = end;
-        
-        emitLabel(start);            /* L1: */
-        emitCondJump((yyvsp[-2].sval), end);       /* if t_cond1 == 0 goto L2 */
-      }
-#line 2074 "myparser.tab.c"
-    break;
-
-  case 22: /* while_loop: WHILE OB bool_expr CB DO $@1 block  */
-#line 847 "myparser.y"
-      {
-        /* 2) after the block, loop back & close */
-        emitGoto(current_loop_start);  
-        emitLabel(current_loop_end);  /* L2: */
-      }
-#line 2084 "myparser.tab.c"
-    break;
-
-  case 23: /* $@2: %empty  */
-#line 856 "myparser.y"
-      {
-        /* 1) init loop var */
-        emit((yyvsp[-7].sval), (yyvsp[-5].sval), NULL, NULL);             /* a := (10, 8) */
-
-        /* 2) blank and loop‐start label */
-        char* start = newLabel();  track_allocation(start);
-        char* end   = newLabel();  track_allocation(end);
-        current_for_start = start;
-        current_for_end   = end;
-        emitLabel(start);  
-
-        /* 3) compute bound (t3) and step (t4) */
-        char* bound = newTemp();
-        emit(bound, (yyvsp[-3].sval), NULL, NULL);          /* t3 := b + (10, 2) */
-        current_for_step_temp = newTemp();
-        emit(current_for_step_temp, (yyvsp[-1].sval), NULL, NULL);                              /* t4 := (1, 10) */
-
-        /* 4) test and conditional jump - handle inc/dec direction */
-        char* cond = newCondTemp();
-        if (strcmp((yyvsp[-2].sval), "inc") == 0) {
-            emit(cond, (yyvsp[-7].sval), ">", bound);           /* t_cond2 := a > t3 */
-        } else {
-            emit(cond, (yyvsp[-7].sval), "<", bound);           /* t_cond2 := a < t3 */
-        }
-        emitCondJumpTrue(cond, end);          /* if t_cond2 == 1 goto L4 */
-      }
-#line 2115 "myparser.tab.c"
-    break;
-
-  case 24: /* for_stmt: FOR identifier ASSIGN expression TO expression for_dir for_step DO $@2 block  */
-#line 883 "myparser.y"
-      {
-        /* 5) body already emitted by `block` */
-
-        /* 6) increment by saved step temp based on direction */
-        char* tmp = newTemp();
-        char* dir = strdup(current_for_step_temp);  // Save the direction
-        track_allocation(dir);
-        
-        // Check the for_dir type
-        if (strstr(dir, "inc")) {
-            emit(tmp, (yyvsp[-9].sval), "+", current_for_step_temp);  
-        } else {
-            emit(tmp, (yyvsp[-9].sval), "-", current_for_step_temp);  
-        }
-        emit((yyvsp[-9].sval), tmp, NULL, NULL);             /* a := tmp */
-
-        /* 7) back‐edge and end label */
-        emitGoto(current_for_start);
-        emitLabel(current_for_end);            /* L4: */
-      }
-#line 2140 "myparser.tab.c"
-    break;
-
-  case 25: /* $@3: %empty  */
-#line 907 "myparser.y"
-      {
-        /* 1) at “)”, make labels and emit the conditional jump */
-        __if_false = newLabel();    track_allocation(__if_false);
-        __if_end   = newLabel();    track_allocation(__if_end);
-        emitCondJump((yyvsp[-1].sval), __if_false);  
-      }
-#line 2151 "myparser.tab.c"
-    break;
-
-  case 26: /* $@4: %empty  */
-#line 914 "myparser.y"
-      {
-        /* 2) right after THEN block */
-        emitGoto(__if_end);
-        emitLabel(__if_false);  
-      }
-#line 2161 "myparser.tab.c"
-    break;
-
-  case 27: /* if_cond: IF OB bool_expr CB $@3 block $@4 ELSE block  */
-#line 921 "myparser.y"
-      {
-        /* 3) after ELSE block */
-        emitLabel(__if_end);
-      }
-#line 2170 "myparser.tab.c"
-    break;
-
-  case 28: /* expression: term  */
-#line 928 "myparser.y"
-                             { (yyval.sval) = (yyvsp[0].sval); }
-#line 2176 "myparser.tab.c"
-    break;
-
-  case 29: /* expression: expression ADD term  */
-#line 929 "myparser.y"
-                             {
-        char* temp = newTemp();
-        emit(temp, (yyvsp[-2].sval), "+", (yyvsp[0].sval)); (yyval.sval) = temp;
-    }
-#line 2185 "myparser.tab.c"
-    break;
-
-  case 30: /* expression: expression SUB term  */
-#line 933 "myparser.y"
-                             {
-        char* temp = newTemp();
-        emit(temp, (yyvsp[-2].sval), "-", (yyvsp[0].sval)); (yyval.sval) = temp;
-    }
-#line 2194 "myparser.tab.c"
-    break;
-
-  case 31: /* term: factor  */
-#line 940 "myparser.y"
-                            { (yyval.sval) = (yyvsp[0].sval); }
-#line 2200 "myparser.tab.c"
-    break;
-
-  case 32: /* term: term MUL factor  */
-#line 941 "myparser.y"
-                            {
-        char* temp = newTemp();
-        emit(temp, (yyvsp[-2].sval), "*", (yyvsp[0].sval)); (yyval.sval) = temp;
-    }
-#line 2209 "myparser.tab.c"
-    break;
-
-  case 33: /* term: term DIV factor  */
-#line 945 "myparser.y"
-                            {
-        char* temp = newTemp();
-        emit(temp, (yyvsp[-2].sval), "/", (yyvsp[0].sval)); (yyval.sval) = temp;
-    }
-#line 2218 "myparser.tab.c"
-    break;
-
-  case 34: /* term: term MOD factor  */
-#line 949 "myparser.y"
-                            {
-        char* temp = newTemp();
-        emit(temp, (yyvsp[-2].sval), "%", (yyvsp[0].sval)); (yyval.sval) = temp;
-    }
-#line 2227 "myparser.tab.c"
-    break;
-
-  case 35: /* factor: OB expression CB  */
-#line 956 "myparser.y"
-                             { (yyval.sval) = (yyvsp[-1].sval); }
-#line 2233 "myparser.tab.c"
-    break;
-
-  case 36: /* factor: identifier  */
-#line 957 "myparser.y"
-                             { (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval)); }
-#line 2239 "myparser.tab.c"
-    break;
-
-  case 37: /* factor: INTEGER_CONST  */
-#line 958 "myparser.y"
-                             { (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval)); }
-#line 2245 "myparser.tab.c"
-    break;
-
-  case 38: /* factor: CHAR_LITERAL  */
-#line 959 "myparser.y"
-                             { (yyval.sval) = (yyvsp[0].sval); }
-#line 2251 "myparser.tab.c"
-    break;
-
-  case 39: /* identifier: IDENTIFIER  */
-#line 963 "myparser.y"
+  case 5: /* condition: expression  */
+#line 715 "myparser.y"
                  {
-        if (!is_declared((yyvsp[0].sval))) {
-            fprintf(stderr, "Semantic error: variable '%s' used before declaration.\n", (yyvsp[0].sval));
+        (yyval.node) = (yyvsp[0].node);
+    }
+#line 1944 "myparser.tab.c"
+    break;
+
+  case 6: /* comment: SLCOMMENT  */
+#line 721 "myparser.y"
+                {
+        (yyval.node) = create_node(NODE_COMMENT);
+    }
+#line 1952 "myparser.tab.c"
+    break;
+
+  case 7: /* comment: MLCOMMENT  */
+#line 724 "myparser.y"
+                {
+        (yyval.node) = create_node(NODE_COMMENT);
+    }
+#line 1960 "myparser.tab.c"
+    break;
+
+  case 8: /* comment: %empty  */
+#line 727 "myparser.y"
+                  {
+        (yyval.node) = NULL;
+    }
+#line 1968 "myparser.tab.c"
+    break;
+
+  case 9: /* statementBlock: %empty  */
+#line 733 "myparser.y"
+                  {
+        (yyval.node) = create_node(NODE_BLOCK);
+    }
+#line 1976 "myparser.tab.c"
+    break;
+
+  case 10: /* statementBlock: statement statementBlock  */
+#line 736 "myparser.y"
+                               {
+        (yyval.node) = create_node(NODE_BLOCK);
+        add_child((yyval.node), (yyvsp[-1].node));
+        add_child((yyval.node), (yyvsp[0].node));
+    }
+#line 1986 "myparser.tab.c"
+    break;
+
+  case 11: /* statement: assignment SEMICOLON  */
+#line 744 "myparser.y"
+                           {
+        (yyval.node) = (yyvsp[-1].node);
+    }
+#line 1994 "myparser.tab.c"
+    break;
+
+  case 12: /* statement: if_cond  */
+#line 747 "myparser.y"
+              {
+        (yyval.node) = (yyvsp[0].node);
+    }
+#line 2002 "myparser.tab.c"
+    break;
+
+  case 13: /* statement: while_loop  */
+#line 750 "myparser.y"
+                 {
+        (yyval.node) = (yyvsp[0].node);
+    }
+#line 2010 "myparser.tab.c"
+    break;
+
+  case 14: /* statement: for_loop  */
+#line 753 "myparser.y"
+               {
+        (yyval.node) = (yyvsp[0].node);
+    }
+#line 2018 "myparser.tab.c"
+    break;
+
+  case 15: /* statement: print  */
+#line 756 "myparser.y"
+            {
+        (yyval.node) = (yyvsp[0].node);
+    }
+#line 2026 "myparser.tab.c"
+    break;
+
+  case 16: /* statement: scan  */
+#line 759 "myparser.y"
+           {
+        (yyval.node) = (yyvsp[0].node);
+    }
+#line 2034 "myparser.tab.c"
+    break;
+
+  case 17: /* statement: block  */
+#line 762 "myparser.y"
+            {
+        (yyval.node) = (yyvsp[0].node);
+    }
+#line 2042 "myparser.tab.c"
+    break;
+
+  case 18: /* assignment: IDENTIFIER assignment_op expression  */
+#line 768 "myparser.y"
+                                          {
+        int idx = find_symbol((yyvsp[-2].string));
+        if (idx < 0) {
+            fprintf(stderr, "Error: Undeclared variable '%s' at line %d\n", (yyvsp[-2].string), yylineno);
             exit(1);
         }
-        (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval));
+        (yyval.node) = create_node(NODE_ASSIGN);
+        (yyval.node)->operator = (yyvsp[-1].string);
+        ASTNode* id = create_node(NODE_IDENTIFIER);
+        id->data.string_value = strdup((yyvsp[-2].string));
+        track_allocation(id->data.string_value);
+        add_child((yyval.node), id);
+        add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2263 "myparser.tab.c"
+#line 2061 "myparser.tab.c"
     break;
 
-  case 40: /* bool_expr: condition  */
-#line 973 "myparser.y"
-                { (yyval.sval) = (yyvsp[0].sval); }
-#line 2269 "myparser.tab.c"
+  case 19: /* expression: term  */
+#line 785 "myparser.y"
+           { (yyval.node) = (yyvsp[0].node); }
+#line 2067 "myparser.tab.c"
     break;
 
-  case 41: /* bool_expr: bool_expr AND bool_expr  */
-#line 974 "myparser.y"
-                              {
-        char* temp = newTemp();
-        emit(temp, (yyvsp[-2].sval), "and", (yyvsp[0].sval)); (yyval.sval) = temp;
-    }
-#line 2278 "myparser.tab.c"
-    break;
-
-  case 42: /* bool_expr: bool_expr OR bool_expr  */
-#line 978 "myparser.y"
-                             {
-        char* temp = newTemp();
-        emit(temp, (yyvsp[-2].sval), "or", (yyvsp[0].sval)); (yyval.sval) = temp;
-    }
-#line 2287 "myparser.tab.c"
-    break;
-
-  case 43: /* bool_expr: NOT bool_expr  */
-#line 982 "myparser.y"
-                    {
-        char* temp = newTemp();
-        emit(temp, "not", (yyvsp[0].sval), NULL); (yyval.sval) = temp;
-    }
-#line 2296 "myparser.tab.c"
-    break;
-
-  case 44: /* condition: expression relop expression  */
-#line 989 "myparser.y"
+  case 20: /* expression: expression ADD expression  */
+#line 786 "myparser.y"
                                 {
-      char* tmp = newCondTemp();      
-      emit(tmp, (yyvsp[-2].sval), (yyvsp[-1].sval), (yyvsp[0].sval));          /* t_cond1 := lhs relop rhs */
-      (yyval.sval) = tmp;
-  }
-#line 2306 "myparser.tab.c"
+        (yyval.node) = create_node(NODE_BINARY_OP);
+        (yyval.node)->operator = (yyvsp[-1].string);
+        add_child((yyval.node), (yyvsp[-2].node));
+        add_child((yyval.node), (yyvsp[0].node));
+    }
+#line 2078 "myparser.tab.c"
     break;
 
-  case 45: /* relop: EQ  */
-#line 997 "myparser.y"
-         { (yyval.sval) = strdup("="); track_allocation((yyval.sval)); }
-#line 2312 "myparser.tab.c"
+  case 21: /* expression: expression SUB expression  */
+#line 792 "myparser.y"
+                                {
+        (yyval.node) = create_node(NODE_BINARY_OP);
+        (yyval.node)->operator = (yyvsp[-1].string);
+        add_child((yyval.node), (yyvsp[-2].node));
+        add_child((yyval.node), (yyvsp[0].node));
+    }
+#line 2089 "myparser.tab.c"
     break;
 
-  case 46: /* relop: NE  */
-#line 998 "myparser.y"
-         { (yyval.sval) = strdup("!="); track_allocation((yyval.sval)); }
+  case 22: /* expression: expression MUL expression  */
+#line 798 "myparser.y"
+                                {
+        (yyval.node) = create_node(NODE_BINARY_OP);
+        (yyval.node)->operator = (yyvsp[-1].string);
+        add_child((yyval.node), (yyvsp[-2].node));
+        add_child((yyval.node), (yyvsp[0].node));
+    }
+#line 2100 "myparser.tab.c"
+    break;
+
+  case 23: /* expression: expression DIV expression  */
+#line 804 "myparser.y"
+                                {
+        (yyval.node) = create_node(NODE_BINARY_OP);
+        (yyval.node)->operator = (yyvsp[-1].string);
+        add_child((yyval.node), (yyvsp[-2].node));
+        add_child((yyval.node), (yyvsp[0].node));
+    }
+#line 2111 "myparser.tab.c"
+    break;
+
+  case 24: /* expression: expression MOD expression  */
+#line 810 "myparser.y"
+                                {
+        (yyval.node) = create_node(NODE_BINARY_OP);
+        (yyval.node)->operator = (yyvsp[-1].string);
+        add_child((yyval.node), (yyvsp[-2].node));
+        add_child((yyval.node), (yyvsp[0].node));
+    }
+#line 2122 "myparser.tab.c"
+    break;
+
+  case 25: /* term: factor  */
+#line 819 "myparser.y"
+             { (yyval.node) = (yyvsp[0].node); }
+#line 2128 "myparser.tab.c"
+    break;
+
+  case 26: /* factor: OB expression CB  */
+#line 823 "myparser.y"
+                       { (yyval.node) = (yyvsp[-1].node); }
+#line 2134 "myparser.tab.c"
+    break;
+
+  case 27: /* factor: IDENTIFIER arrIndex  */
+#line 824 "myparser.y"
+                          {
+        int idx = find_symbol((yyvsp[-1].string));
+        if (idx < 0) {
+            fprintf(stderr, "Error: Undeclared variable '%s' at line %d\n", (yyvsp[-1].string), yylineno);
+            exit(1);
+        }
+        (yyval.node) = create_node(NODE_IDENTIFIER);
+        (yyval.node)->data.string_value = strdup((yyvsp[-1].string));
+        track_allocation((yyval.node)->data.string_value);
+        if ((yyvsp[0].node)) add_child((yyval.node), (yyvsp[0].node));
+    }
+#line 2150 "myparser.tab.c"
+    break;
+
+  case 28: /* factor: integerConst  */
+#line 835 "myparser.y"
+                   { (yyval.node) = (yyvsp[0].node); }
+#line 2156 "myparser.tab.c"
+    break;
+
+  case 29: /* factor: CHAR_LITERAL  */
+#line 836 "myparser.y"
+                   {
+        (yyval.node) = create_node(NODE_CHAR_CONST);
+        (yyval.node)->data.char_value = (yyvsp[0].char_val);
+    }
+#line 2165 "myparser.tab.c"
+    break;
+
+  case 30: /* block: BEGIN_TOKEN statementBlock END_TOKEN  */
+#line 843 "myparser.y"
+                                           { (yyval.node) = (yyvsp[-1].node); }
+#line 2171 "myparser.tab.c"
+    break;
+
+  case 31: /* if_cond: IF OB condition CB block SEMICOLON  */
+#line 847 "myparser.y"
+                                         {
+        (yyval.node) = create_node(NODE_IF);
+        add_child((yyval.node), (yyvsp[-3].node));
+        add_child((yyval.node), (yyvsp[-1].node));
+    }
+#line 2181 "myparser.tab.c"
+    break;
+
+  case 32: /* if_cond: IF OB condition CB block ELSE block SEMICOLON  */
+#line 852 "myparser.y"
+                                                    {
+        (yyval.node) = create_node(NODE_IF);
+        add_child((yyval.node), (yyvsp[-5].node));
+        add_child((yyval.node), (yyvsp[-3].node));
+        add_child((yyval.node), (yyvsp[-1].node));
+    }
+#line 2192 "myparser.tab.c"
+    break;
+
+  case 33: /* while_loop: WHILE OB condition CB DO block SEMICOLON  */
+#line 861 "myparser.y"
+                                               {
+        (yyval.node) = create_node(NODE_WHILE);
+        add_child((yyval.node), (yyvsp[-4].node));
+        add_child((yyval.node), (yyvsp[-1].node));
+    }
+#line 2202 "myparser.tab.c"
+    break;
+
+  case 34: /* for_loop: FOR IDENTIFIER ASSIGN expression TO expression INC expression DO block SEMICOLON  */
+#line 869 "myparser.y"
+                                                                                       {
+        int idx = find_symbol((yyvsp[-9].string));
+        if (idx < 0) {
+            fprintf(stderr, "Error: Undeclared variable '%s' at line %d\n", (yyvsp[-9].string), yylineno);
+            exit(1);
+        }
+        (yyval.node) = create_node(NODE_FOR);
+        ASTNode* assign = create_node(NODE_ASSIGN);
+        assign->operator = strdup(":=");
+        track_allocation(assign->operator);
+        ASTNode* id = create_node(NODE_IDENTIFIER);
+        id->data.string_value = strdup((yyvsp[-9].string));
+        track_allocation(id->data.string_value);
+        add_child(assign, id);
+        add_child(assign, (yyvsp[-7].node));
+        add_child((yyval.node), assign);
+        add_child((yyval.node), (yyvsp[-5].node));
+        ASTNode* inc = create_node(NODE_BINARY_OP);
+        inc->operator = strdup("inc");
+        track_allocation(inc->operator);
+        add_child(inc, (yyvsp[-3].node));
+        add_child((yyval.node), inc);
+        add_child((yyval.node), (yyvsp[-1].node));
+    }
+#line 2231 "myparser.tab.c"
+    break;
+
+  case 35: /* for_loop: FOR IDENTIFIER ASSIGN expression TO expression DEC expression DO block SEMICOLON  */
+#line 893 "myparser.y"
+                                                                                       {
+        int idx = find_symbol((yyvsp[-9].string));
+        if (idx < 0) {
+            fprintf(stderr, "Error: Undeclared variable '%s' at line %d\n", (yyvsp[-9].string), yylineno);
+            exit(1);
+        }
+        (yyval.node) = create_node(NODE_FOR);
+        ASTNode* assign = create_node(NODE_ASSIGN);
+        assign->operator = strdup(":=");
+        track_allocation(assign->operator);
+        ASTNode* id = create_node(NODE_IDENTIFIER);
+        id->data.string_value = strdup((yyvsp[-9].string));
+        track_allocation(id->data.string_value);
+        add_child(assign, id);
+        add_child(assign, (yyvsp[-7].node));
+        add_child((yyval.node), assign);
+        add_child((yyval.node), (yyvsp[-5].node));
+        ASTNode* dec = create_node(NODE_BINARY_OP);
+        dec->operator = strdup("dec");
+        track_allocation(dec->operator);
+        add_child(dec, (yyvsp[-3].node));
+        add_child((yyval.node), dec);
+        add_child((yyval.node), (yyvsp[-1].node));
+    }
+#line 2260 "myparser.tab.c"
+    break;
+
+  case 36: /* print: PRINT OB STRING_LITERAL formatArgs CB SEMICOLON  */
+#line 920 "myparser.y"
+                                                      {
+        (yyval.node) = create_node(NODE_PRINT);
+        ASTNode* str = create_node(NODE_STRING_CONST);
+        str->data.string_value = strdup((yyvsp[-3].string));
+        track_allocation(str->data.string_value);
+        add_child((yyval.node), str);
+        add_child((yyval.node), (yyvsp[-2].node));
+    }
+#line 2273 "myparser.tab.c"
+    break;
+
+  case 37: /* formatArgs: %empty  */
+#line 931 "myparser.y"
+                  { (yyval.node) = NULL; }
+#line 2279 "myparser.tab.c"
+    break;
+
+  case 38: /* formatArgs: COMMA argList  */
+#line 932 "myparser.y"
+                    { (yyval.node) = (yyvsp[0].node); }
+#line 2285 "myparser.tab.c"
+    break;
+
+  case 39: /* argList: value  */
+#line 936 "myparser.y"
+            {
+        (yyval.node) = create_node(NODE_BLOCK);
+        add_child((yyval.node), (yyvsp[0].node));
+    }
+#line 2294 "myparser.tab.c"
+    break;
+
+  case 40: /* argList: value COMMA argList  */
+#line 940 "myparser.y"
+                          {
+        (yyval.node) = (yyvsp[0].node);
+        add_child((yyval.node), (yyvsp[-2].node));
+    }
+#line 2303 "myparser.tab.c"
+    break;
+
+  case 41: /* value: IDENTIFIER  */
+#line 947 "myparser.y"
+                 {
+        int idx = find_symbol((yyvsp[0].string));
+        if (idx < 0) {
+            fprintf(stderr, "Error: Undeclared variable '%s' at line %d\n", (yyvsp[0].string), yylineno);
+            exit(1);
+        }
+        (yyval.node) = create_node(NODE_IDENTIFIER);
+        (yyval.node)->data.string_value = strdup((yyvsp[0].string));
+        track_allocation((yyval.node)->data.string_value);
+    }
 #line 2318 "myparser.tab.c"
     break;
 
-  case 47: /* relop: GT  */
-#line 999 "myparser.y"
-         { (yyval.sval) = strdup(">"); track_allocation((yyval.sval)); }
+  case 42: /* value: integerConst  */
+#line 957 "myparser.y"
+                   { (yyval.node) = (yyvsp[0].node); }
 #line 2324 "myparser.tab.c"
     break;
 
-  case 48: /* relop: GE  */
-#line 1000 "myparser.y"
-         { (yyval.sval) = strdup(">="); track_allocation((yyval.sval)); }
-#line 2330 "myparser.tab.c"
+  case 43: /* scan: SCAN OB scanArgs CB SEMICOLON  */
+#line 961 "myparser.y"
+                                    {
+        (yyval.node) = create_node(NODE_SCAN);
+        add_child((yyval.node), (yyvsp[-2].node));
+    }
+#line 2333 "myparser.tab.c"
     break;
 
-  case 49: /* relop: LT  */
-#line 1001 "myparser.y"
-         { (yyval.sval) = strdup("<"); track_allocation((yyval.sval)); }
-#line 2336 "myparser.tab.c"
+  case 44: /* scanArgs: identifierList  */
+#line 968 "myparser.y"
+                     { (yyval.node) = (yyvsp[0].node); }
+#line 2339 "myparser.tab.c"
     break;
 
-  case 50: /* relop: LE  */
-#line 1002 "myparser.y"
-         { (yyval.sval) = strdup("<="); track_allocation((yyval.sval)); }
-#line 2342 "myparser.tab.c"
+  case 45: /* scanArgs: STRING_LITERAL COMMA identifierList  */
+#line 969 "myparser.y"
+                                          {
+        (yyval.node) = create_node(NODE_BLOCK);
+        ASTNode* str = create_node(NODE_STRING_CONST);
+        str->data.string_value = strdup((yyvsp[-2].string));
+        track_allocation(str->data.string_value);
+        add_child((yyval.node), str);
+        add_child((yyval.node), (yyvsp[0].node));
+    }
+#line 2352 "myparser.tab.c"
     break;
 
-  case 52: /* for_step: expression  */
-#line 1010 "myparser.y"
-                 { (yyval.sval) = (yyvsp[0].sval); }
-#line 2348 "myparser.tab.c"
+  case 46: /* identifierList: IDENTIFIER identifierListT  */
+#line 980 "myparser.y"
+                                 {
+        int idx = find_symbol((yyvsp[-1].string));
+        if (idx < 0) {
+            fprintf(stderr, "Error: Undeclared variable '%s' at line %d\n", (yyvsp[-1].string), yylineno);
+            exit(1);
+        }
+        (yyval.node) = create_node(NODE_BLOCK);
+        ASTNode* id = create_node(NODE_IDENTIFIER);
+        id->data.string_value = strdup((yyvsp[-1].string));
+        track_allocation(id->data.string_value);
+        add_child((yyval.node), id);
+        add_child((yyval.node), (yyvsp[0].node));
+    }
+#line 2370 "myparser.tab.c"
     break;
 
-  case 53: /* for_dir: INC  */
+  case 47: /* identifierListT: %empty  */
+#line 996 "myparser.y"
+                  { (yyval.node) = NULL; }
+#line 2376 "myparser.tab.c"
+    break;
+
+  case 48: /* identifierListT: COMMA IDENTIFIER identifierListT  */
+#line 997 "myparser.y"
+                                       {
+        int idx = find_symbol((yyvsp[-1].string));
+        if (idx < 0) {
+            fprintf(stderr, "Error: Undeclared variable '%s' at line %d\n", (yyvsp[-1].string), yylineno);
+            exit(1);
+        }
+        (yyval.node) = create_node(NODE_BLOCK);
+        ASTNode* id = create_node(NODE_IDENTIFIER);
+        id->data.string_value = strdup((yyvsp[-1].string));
+        track_allocation(id->data.string_value);
+        add_child((yyval.node), id);
+        add_child((yyval.node), (yyvsp[0].node));
+    }
+#line 2394 "myparser.tab.c"
+    break;
+
+  case 49: /* assignment_op: ASSIGN  */
+#line 1013 "myparser.y"
+             { (yyval.string) = strdup(":="); track_allocation((yyval.string)); }
+#line 2400 "myparser.tab.c"
+    break;
+
+  case 50: /* assignment_op: PLUSEQ  */
 #line 1014 "myparser.y"
-          { (yyval.sval) = strdup("inc"); track_allocation((yyval.sval)); }
-#line 2354 "myparser.tab.c"
+             { (yyval.string) = strdup("+="); track_allocation((yyval.string)); }
+#line 2406 "myparser.tab.c"
     break;
 
-  case 54: /* for_dir: DEC  */
+  case 51: /* assignment_op: MINUSEQ  */
 #line 1015 "myparser.y"
-          { (yyval.sval) = strdup("dec"); track_allocation((yyval.sval)); }
-#line 2360 "myparser.tab.c"
+              { (yyval.string) = strdup("-="); track_allocation((yyval.string)); }
+#line 2412 "myparser.tab.c"
     break;
 
-  case 55: /* print: PRINT OB STRING_LITERAL formatArgs CB SEMICOLON  */
-#line 1020 "myparser.y"
-                                                      {
-        if ((yyvsp[-2].sval)) {
-            printf("print \"%s\", %s\n", (yyvsp[-3].sval), (yyvsp[-2].sval));
-            emitPrint((yyvsp[-3].sval), (yyvsp[-2].sval));
-        } else {
-            printf("print \"%s\"\n", (yyvsp[-3].sval));
-            emitPrint((yyvsp[-3].sval), NULL);
-        }
-    }
-#line 2374 "myparser.tab.c"
+  case 52: /* assignment_op: MULEQ  */
+#line 1016 "myparser.y"
+            { (yyval.string) = strdup("*="); track_allocation((yyval.string)); }
+#line 2418 "myparser.tab.c"
     break;
 
-  case 56: /* scan: SCAN OB STRING_LITERAL COMMA argList CB SEMICOLON  */
+  case 53: /* assignment_op: DIVEQ  */
+#line 1017 "myparser.y"
+            { (yyval.string) = strdup("/="); track_allocation((yyval.string)); }
+#line 2424 "myparser.tab.c"
+    break;
+
+  case 54: /* assignment_op: MODEQ  */
+#line 1018 "myparser.y"
+            { (yyval.string) = strdup("%="); track_allocation((yyval.string)); }
+#line 2430 "myparser.tab.c"
+    break;
+
+  case 55: /* relop: EQ  */
+#line 1022 "myparser.y"
+         { (yyval.string) = strdup("="); track_allocation((yyval.string)); }
+#line 2436 "myparser.tab.c"
+    break;
+
+  case 56: /* relop: GE  */
+#line 1023 "myparser.y"
+         { (yyval.string) = strdup(">="); track_allocation((yyval.string)); }
+#line 2442 "myparser.tab.c"
+    break;
+
+  case 57: /* relop: GT  */
+#line 1024 "myparser.y"
+         { (yyval.string) = strdup(">"); track_allocation((yyval.string)); }
+#line 2448 "myparser.tab.c"
+    break;
+
+  case 58: /* relop: LE  */
+#line 1025 "myparser.y"
+         { (yyval.string) = strdup("<="); track_allocation((yyval.string)); }
+#line 2454 "myparser.tab.c"
+    break;
+
+  case 59: /* relop: LT  */
+#line 1026 "myparser.y"
+         { (yyval.string) = strdup("<"); track_allocation((yyval.string)); }
+#line 2460 "myparser.tab.c"
+    break;
+
+  case 60: /* relop: NE  */
+#line 1027 "myparser.y"
+         { (yyval.string) = strdup("!="); track_allocation((yyval.string)); }
+#line 2466 "myparser.tab.c"
+    break;
+
+  case 61: /* arrIndex: %empty  */
+#line 1031 "myparser.y"
+                  { (yyval.node) = NULL; }
+#line 2472 "myparser.tab.c"
+    break;
+
+  case 62: /* arrIndex: LBRACKET expression RBRACKET  */
 #line 1032 "myparser.y"
-                                                        {
-        printf("scan \"%s\"\n", (yyvsp[-4].sval));
-        if ((yyvsp[-2].sval)) printf("vars: %s\n", (yyvsp[-2].sval)); // variables list
-        emitScan((yyvsp[-4].sval), (yyvsp[-2].sval));
+                                   { (yyval.node) = (yyvsp[-1].node); }
+#line 2478 "myparser.tab.c"
+    break;
+
+  case 63: /* varDecBlock: BEGIN_TOKEN VARDECL COLON comment VarDecList comment END_TOKEN VARDECL  */
+#line 1036 "myparser.y"
+                                                                             {
+        (yyval.node) = create_node(NODE_BLOCK);
+        add_child((yyval.node), (yyvsp[-3].node));
     }
-#line 2384 "myparser.tab.c"
+#line 2487 "myparser.tab.c"
     break;
 
-  case 57: /* formatArgs: %empty  */
-#line 1040 "myparser.y"
-                  { (yyval.sval) = NULL; }
-#line 2390 "myparser.tab.c"
-    break;
-
-  case 58: /* formatArgs: COMMA argList  */
-#line 1041 "myparser.y"
-                    { (yyval.sval) = (yyvsp[0].sval); }
-#line 2396 "myparser.tab.c"
-    break;
-
-  case 59: /* argList: value  */
-#line 1045 "myparser.y"
-            { (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval)); }
-#line 2402 "myparser.tab.c"
-    break;
-
-  case 60: /* argList: value COMMA argList  */
-#line 1046 "myparser.y"
-                          {
-        char* temp = malloc(strlen((yyvsp[-2].sval)) + strlen((yyvsp[0].sval)) + 2);
-        sprintf(temp, "%s,%s", (yyvsp[-2].sval), (yyvsp[0].sval));
-        track_allocation(temp);
-        (yyval.sval) = temp;
+  case 64: /* VarDecList: VarDeclaration  */
+#line 1043 "myparser.y"
+                     {
+        (yyval.node) = create_node(NODE_BLOCK);
+        add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2413 "myparser.tab.c"
+#line 2496 "myparser.tab.c"
     break;
 
-  case 61: /* value: identifier  */
-#line 1055 "myparser.y"
-                 { (yyval.sval) = (yyvsp[0].sval); }
-#line 2419 "myparser.tab.c"
+  case 65: /* VarDecList: VarDecList VarDeclaration  */
+#line 1047 "myparser.y"
+                                {
+        (yyval.node) = (yyvsp[-1].node);
+        add_child((yyval.node), (yyvsp[0].node));
+    }
+#line 2505 "myparser.tab.c"
     break;
 
-  case 62: /* value: INTEGER_CONST  */
-#line 1056 "myparser.y"
-                    { (yyval.sval) = (yyvsp[0].sval); }
-#line 2425 "myparser.tab.c"
-    break;
-
-  case 63: /* value: CHAR_LITERAL  */
-#line 1057 "myparser.y"
-                    { (yyval.sval) = (yyvsp[0].sval); }
-#line 2431 "myparser.tab.c"
-    break;
-
-  case 67: /* VarDeclaration: OB IDENTIFIER arrayDec COMMA type CB SEMICOLON  */
-#line 1071 "myparser.y"
+  case 66: /* VarDeclaration: OB IDENTIFIER arrayDec COMMA type CB SEMICOLON  */
+#line 1054 "myparser.y"
                                                      {
-        // Handle array declaration
-        int is_array = 0;
-        int array_size = 0;
-        char* base_name = strdup((yyvsp[-5].sval));
-        
-        // Check for the brackets in the identifier
-        char* bracket_pos = strchr(base_name, '[');
-        if (bracket_pos != NULL) {
-            *bracket_pos = '\0';  // Terminate the string at the bracket
-            is_array = 1;
-            // Extract array size if available
-            char* size_str = bracket_pos + 1;
-            char* close_bracket = strchr(size_str, ']');
-            if (close_bracket) {
-                *close_bracket = '\0';
-                array_size = atoi(size_str);
-            }
+        VarType var_type;
+        if (strcmp((yyvsp[-2].node)->data.string_value, "int") == 0) {
+            var_type = TYPE_INT;
+        } else if (strcmp((yyvsp[-2].node)->data.string_value, "char") == 0) {
+            var_type = TYPE_CHAR;
+        } else {
+            var_type = TYPE_UNKNOWN;
         }
         
-        // Declare the variable
-        declare_variable(base_name);
+        int array_size = (yyvsp[-4].node) ? (yyvsp[-4].node)->data.int_const.int_value : 0;
+        declare_variable((yyvsp[-5].string), var_type, (yyvsp[-4].node) != NULL, array_size);
         
-        // If it's an array, update the symbol table entry
-        if (is_array) {
-            int idx = find_symbol(base_name);
-            if (idx >= 0) {
-                symbol_table[idx].is_array = 1;
-                symbol_table[idx].array_size = array_size;
-            }
-        }
-        free(base_name);
+        (yyval.node) = create_node(NODE_VARDECL);
+        ASTNode* id = create_node(NODE_IDENTIFIER);
+        id->data.string_value = strdup((yyvsp[-5].string));
+        track_allocation(id->data.string_value);
+        add_child((yyval.node), id);
+        add_child((yyval.node), (yyvsp[-2].node));
+        if ((yyvsp[-4].node)) add_child((yyval.node), (yyvsp[-4].node));
     }
-#line 2469 "myparser.tab.c"
+#line 2531 "myparser.tab.c"
+    break;
+
+  case 67: /* arrayDec: %empty  */
+#line 1078 "myparser.y"
+                  { (yyval.node) = NULL; }
+#line 2537 "myparser.tab.c"
+    break;
+
+  case 68: /* arrayDec: LBRACKET DECIMAL RBRACKET  */
+#line 1079 "myparser.y"
+                                {
+        (yyval.node) = create_node(NODE_INT_CONST);
+        (yyval.node)->data.int_const.int_value = (yyvsp[-1].int_val);
+        (yyval.node)->data.int_const.base = 10;
+    }
+#line 2547 "myparser.tab.c"
+    break;
+
+  case 69: /* type: INT_TYPE  */
+#line 1087 "myparser.y"
+               {
+        (yyval.node) = create_node(NODE_TYPE);
+        (yyval.node)->data.string_value = strdup("int");
+        track_allocation((yyval.node)->data.string_value);
+    }
+#line 2557 "myparser.tab.c"
+    break;
+
+  case 70: /* type: CHAR_TYPE  */
+#line 1092 "myparser.y"
+                {
+        (yyval.node) = create_node(NODE_TYPE);
+        (yyval.node)->data.string_value = strdup("char");
+        track_allocation((yyval.node)->data.string_value);
+    }
+#line 2567 "myparser.tab.c"
+    break;
+
+  case 71: /* integerConst: OB DECIMAL COMMA DECIMAL CB  */
+#line 1101 "myparser.y"
+                                  {
+        if ((yyvsp[-1].int_val) != 2 && (yyvsp[-1].int_val) != 8 && (yyvsp[-1].int_val) != 10) {
+            printf("Invalid base %d at line %d\n", (yyvsp[-1].int_val), yylineno);
+            exit(1);
+        }
+        
+        char num_str[32];
+        sprintf(num_str, "%d", (yyvsp[-3].int_val));
+        
+        // Convert the value based on the given base
+        int decimal_value = convert_base((yyvsp[-3].int_val), (yyvsp[-1].int_val));
+        
+        if (debug_simulation) {
+            printf("DEBUG: Integer constant %d in base %d = %d decimal\n", (yyvsp[-3].int_val), (yyvsp[-1].int_val), decimal_value);
+        }
+        
+        (yyval.node) = create_node(NODE_INT_CONST);
+        (yyval.node)->data.int_const.int_value = decimal_value; // Store the converted decimal value
+        (yyval.node)->data.int_const.base = (yyvsp[-1].int_val);
+    }
+#line 2592 "myparser.tab.c"
     break;
 
 
-#line 2473 "myparser.tab.c"
+#line 2596 "myparser.tab.c"
 
       default: break;
     }
@@ -2662,7 +2785,7 @@ yyreturnlab:
   return yyresult;
 }
 
-#line 1116 "myparser.y"
+#line 1123 "myparser.y"
 
 
 int main(int argc, char *argv[]) {
@@ -2678,7 +2801,7 @@ int main(int argc, char *argv[]) {
             break;
         }
     }
-
+    
     if (argc != 2) {
         fprintf(stderr, "Usage: %s [-d|--debug] <input file>\n", argv[0]);
         return 1;
@@ -2690,31 +2813,41 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (yyparse() == 0) {
-        printf("\nParsing completed successfully.\n");
+    int parse_result = yyparse();
+    
+    if (parse_result == 0) {
+        printf("Parsing completed successfully.\n");
         
-        // Initialize temporary variables for simulation
-        for (int i = 0; i < MAX_TEMP_VARS; i++) {
-            temp_vars[i].initialized = 0;
-            temp_vars[i].type = TYPE_UNKNOWN;
+        printf("\n=== Program Output ===\n");
+        
+        // Execute the program by walking the AST
+        if (ast_root) {
+            execute_node(ast_root);
         }
         
-        printf("\nStarting program simulation...\n");
-        // Execute the program
-        execute_program();
+        printf("\n=== End of Program Output ===\n");
         
         // Print the symbol table
-        printf("\nPrinting symbol table...\n");
         print_symbol_table();
     }
 
+    // Clean up safely - be very defensive against crashes
     fclose(yyin);
+    
+    // Free the AST with robust error handling
+    if (ast_root) {
+        free_ast(ast_root);
+        ast_root = NULL;
+    }
+    
+    // Clean up tracked memory at the very end
     cleanup_memory();
-    return 0;
+    
+    // Exit successfully
+    return parse_result ? 1 : 0;
 }
 
-void yyerror(const char* s) {
+void yyerror(const char *s) {
     fprintf(stderr, "Syntax error at line %d: %s\n", yylineno, s);
-    cleanup_memory();
     exit(1);
 }

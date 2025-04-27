@@ -1,15 +1,12 @@
 %{
-#include "myparser.tab.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
-
-
+#include "ast.h"
+#include "myparser.tab.h"
 extern int yylineno;
 
-// Helper function to allocate and set string values
-char* create_string(char* text) {
+char* create_string(const char* text) {
     char* str = strdup(text);
     if (!str) {
         fprintf(stderr, "Memory allocation failed\n");
@@ -18,135 +15,99 @@ char* create_string(char* text) {
     return str;
 }
 
-// Validate (value, base) integer format
-int validate_integer(char* value_str, char* base_str) {
-    int base = atoi(base_str);
-    if (base != 2 && base != 8 && base != 10)
-        return 0;
-
-    int len = strlen(value_str);
-    for (int i = 0; i < len; ++i) {
-        char c = value_str[i];
-        if (!isdigit(c)) return 0;
-        if ((base == 2 && c > '1') ||
-            (base == 8 && c > '7'))
-            return 0;
+void remove_quotes(char* str) {
+    int len = strlen(str);
+    if (len >= 2) {
+        memmove(str, str + 1, len - 2);
+        str[len - 2] = '\0';
     }
-    return 1;
 }
+
 %}
+
+%option noyywrap
+%option yylineno
 
 %%
 
-"begin"    { return BEGIN_TOKEN; }
-"end"      { return END_TOKEN; }
-"program"  { return PROGRAM; }
-"if"       { return IF; }
-"else"     { return ELSE; }
-"while"    { return WHILE; }
-"for"      { return FOR; }
-"print"    { return PRINT; }
-"scan"     { return SCAN; }
-"to"       { return TO; }
-"inc"      { return INC; }
-"dec"      { return DEC; }
-"do"       { return DO; }
-"VarDecl"  { return VARDECL; }
-"int"      { return INT_TYPE; }
-"char"     { return CHAR_TYPE; }
+[ \t\r]+    { /* Skip whitespace */ }
+[\n]        { /* Skip newlines */ }
 
-":="       { return ASSIGN; }
-"+="       { return PLUSEQ; }
-"-="       { return MINUSEQ; }
-"*="       { return MULEQ; }
-"/="       { return DIVEQ; }
-"%="       { return MODEQ; }
+"begin"     { return BEGIN_TOKEN; }
+"end"       { return END_TOKEN; }
+"program"   { return PROGRAM; }
+"VarDecl"   { return VARDECL; }
+"if"        { return IF; }
+"else"      { return ELSE; }
+"while"     { return WHILE; }
+"for"       { return FOR; }
+"to"        { return TO; }
+"inc"       { return INC; }
+"dec"       { return DEC; }
+"do"        { return DO; }
+"print"     { return PRINT; }
+"scan"      { return SCAN; }
+"int"       { yylval.string = strdup("int"); return INT_TYPE; }
+"char"      { yylval.string = strdup("char"); return CHAR_TYPE; }
 
-"and"      { return AND; }
-"or"       { return OR; }
-"not"      { return NOT; }
+":"         { return COLON; }
+";"         { return SEMICOLON; }
+","         { return COMMA; }
+"["         { return LBRACKET; }
+"]"         { return RBRACKET; }
+"'"         { return QUOTE; }
+"\""        { return DQUOTE; }
+"@"         { return AT; }
 
-"//".*     { yylineno++; return SLCOMMENT; }
-"/*"([^*]|\*+[^/*])*\*+"/" { 
-    for (char *s = yytext; *s; ++s) if (*s == '\n') yylineno++;
-    return MLCOMMENT; 
-}
+"("         { yylval.string = strdup("("); return OB; }
+")"         { yylval.string = strdup(")"); return CB; }
+"*"         { yylval.string = strdup("*"); return MUL; }
+"+"         { yylval.string = strdup("+"); return ADD; }
+"-"         { yylval.string = strdup("-"); return SUB; }
+"/"         { yylval.string = strdup("/"); return DIV; }
+"%"         { yylval.string = strdup("%"); return MOD; }
+"="         { yylval.string = strdup("="); return EQ; }
+">"         { yylval.string = strdup(">"); return GT; }
+"<"         { yylval.string = strdup("<"); return LT; }
+">="        { yylval.string = strdup(">="); return GE; }
+"<="        { yylval.string = strdup("<="); return LE; }
+"!="        { yylval.string = strdup("!="); return NE; }
 
-":"        { return COLON; }
-";"        { return SEMICOLON; }
-","        { return COMMA; }
-"["        { return LBRACKET; }
-"]"        { return RBRACKET; }
-"'"        { return QUOTE; }
-"\""       { return DQUOTE; }
-"@"        { return AT; }
+":="        { return ASSIGN; }
+"+="        { return PLUSEQ; }
+"-="        { return MINUSEQ; }
+"*="        { return MULEQ; }
+"/="        { return DIVEQ; }
+"%="        { return MODEQ; }
 
-"+"        { return ADD; }
-"-"        { return SUB; }
-"*"        { return MUL; }
-"/"        { return DIV; }
-"%"        { return MOD; }
-"("        { return OB; }
-")"        { return CB; }
-"="        { return EQ; }
-">"        { return GT; }
-"<"        { return LT; }
-">="       { return GE; }
-"<="       { return LE; }
-"<>"       { return NE; }
+"//".*      { return SLCOMMENT; }
+"/*"([^*]|"*"[^/])*"*/" { return MLCOMMENT; }
 
-\"[^\"]*\" {
-    yytext[strlen(yytext) - 1] = '\0';
-    yylval.sval = create_string(yytext + 1);  // remove quotes
+\"[^"]*\"   { 
+    yylval.string = strdup(yytext);
+    char* str = yylval.string;
+    int len = strlen(str);
+    // Remove quotes but keep them in the original string for printing
+    str[len-1] = '\0';
+    str++;
     return STRING_LITERAL;
 }
 
-'[^']' {
-    yylval.sval = create_string(yytext);
-    return CHAR_LITERAL;
+'.'         { 
+    yylval.char_val = yytext[1]; 
+    return CHAR_LITERAL; 
 }
 
-[a-z][a-z0-9_]* {
-    yylval.sval = create_string(yytext);
-    return IDENTIFIER;
+[0-9]+      { 
+    yylval.int_val = atoi(yytext); 
+    return DECIMAL; 
 }
 
-[0-9]+\.[0-9]+ {
-    yylval.dval = atof(yytext);
-    return DOUBLE;
+[a-zA-Z][a-zA-Z0-9_]*  { 
+    yylval.string = strdup(yytext);
+    return IDENTIFIER; 
 }
 
-[0-9]+ {
-    yylval.ival = atoi(yytext);
-    return DECIMAL;
-}
-
-\([0-9]+,[ ]*(2|8|10)\) {
-    char* copy = strdup(yytext);
-    char* inner = copy + 1;              // skip '('
-    char* comma = strchr(inner, ',');
-    *comma = '\0';                       // null-terminate value
-    char* value_str = inner;
-    char* base_str = comma + 1;
-    base_str[strcspn(base_str, ")")] = '\0';  // remove closing ')'
-
-    if (!validate_integer(value_str, base_str)) {
-        fprintf(stderr, "Lexical error at line %d: Invalid integer constant format %s\n", yylineno, yytext);
-        free(copy);
-        exit(1);
-    }
-
-    yylval.sval = create_string(yytext);
-    free(copy);
-    return INTEGER_CONST;
-}
-
-[ \t\r]+   { /* Ignore whitespace */ }
-\n         { yylineno++; }
-.          { printf("Unexpected character: %s at line %d\n", yytext, yylineno); exit(1); }
+.           { printf("Unrecognized character: %s\n", yytext); }
 
 %%
-
-int yywrap() {
-    return 1;
-}
