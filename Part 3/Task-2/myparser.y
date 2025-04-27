@@ -384,11 +384,11 @@ int perform_op(int left, const char* op, int right) {
 }
 
 // Execute a single instruction
-void execute_instruction(int idx) {
+int execute_instruction(int idx) {
     Instruction* instr = &instructions[idx];
     
     // Handle label (no action needed, just for jumps)
-    if (instr->is_label) return;
+    if (instr->is_label) return idx + 1;
     
     // Handle goto
     if (instr->is_goto) {
