@@ -6,4 +6,4 @@ a.out: mylex.l myparser.y
 	gcc -o a.out myparser.tab.c lex.yy.c -lfl
 
 clean:
-	rm -f a.out myparser.tab.c myparser.tab.h lex.yy.c
+	rm -f a.out myparser.tab.c parser.tab.h lex.yy.c

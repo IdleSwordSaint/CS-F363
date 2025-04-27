@@ -296,18 +296,55 @@ char* getBaseOperator(char* op) {
 }
 
 // ---- Simulation functions ----
+// Helper function to get the actual value from (value, base) format
+int parse_integer_const(const char* str) {
+    // Skip the opening bracket
+    char* copy = strdup(str + 1);
+    // Find the comma
+    char* comma = strchr(copy, ',');
+    if (!comma) {
+        free(copy);
+        return atoi(str); // Default fallback if format is invalid
+    }
+    *comma = '\0';
+    
+    // Get the value and base
+    int value = atoi(copy);
+    int base = atoi(comma + 1);
+    
+    // Convert from the given base to decimal
+    if (base == 2 || base == 8) {
+        int decimal_value = 0;
+        int digit_value;
+        for (int i = 0; copy[i] != '\0'; i++) {
+            digit_value = copy[i] - '0';
+            decimal_value = decimal_value * base + digit_value;
+        }
+        value = decimal_value;
+    }
+    
+    free(copy);
+    return value;
+}
+
 // Get integer value of a variable or literal
 int get_int_value(const char* name) {
-    // Check if it's a literal number
+    // Check if it's a literal number directly
     if (isdigit(name[0]) || (name[0] == '-' && isdigit(name[1]))) {
         return atoi(name);
+    }
+    
+    // Check if it's in (value, base) format
+    if (name[0] == '(') {
+        return parse_integer_const(name);
     }
     
     // Check symbol table
     int idx = find_symbol(name);
     if (idx >= 0) {
         if (!symbol_table[idx].initialized) {
-            fprintf(stderr, "Semantic error: Using uninitialized variable '%s'\n", name);
+            fprintf(stderr, "Semantic error at line %d: Variable '%s' used before initialization.\n", 
+                    yylineno, name);
             exit(1);
         }
         return symbol_table[idx].value.int_val;
@@ -316,6 +353,10 @@ int get_int_value(const char* name) {
     // Check temp variables
     idx = find_temp_var(name);
     if (idx >= 0) {
+        if (!temp_vars[idx].initialized) {
+            fprintf(stderr, "Internal error: Temporary variable '%s' used before initialization.\n", name);
+            exit(1);
+        }
         return temp_vars[idx].value.int_val;
     }
     
@@ -439,18 +480,37 @@ int execute_instruction(int idx) {
         clean_str[len - 2] = '\0';
         
         if (instr->arg2) {
-            // Handle format args
+            // Format string with arguments
             char* args_copy = strdup(instr->arg2);
             char* token = strtok(args_copy, ",");
-            char format[100];
-            strcpy(format, clean_str);
+            int arg_count = 0;
+            int values[10];  // Support up to 10 arguments
             
-            // TODO: Implement proper formatting with arguments
-            while (token) {
-                int val = get_int_value(token);
-                printf("%s: %d\n", token, val);
+            // Parse all arguments
+            while (token && arg_count < 10) {
+                values[arg_count++] = get_int_value(token);
                 token = strtok(NULL, ",");
             }
+            
+            // Simple formatted output - replace %d with values
+            char* fmt = clean_str;
+            char* output = malloc(1000);
+            char* out_ptr = output;
+            int val_idx = 0;
+            
+            while (*fmt && val_idx < arg_count) {
+                if (*fmt == '%' && *(fmt + 1) == 'd') {
+                    int chars = sprintf(out_ptr, "%d", values[val_idx++]);
+                    out_ptr += chars;
+                    fmt += 2;
+                } else {
+                    *out_ptr++ = *fmt++;
+                }
+            }
+            *out_ptr = '\0';
+            
+            printf("%s\n", output);
+            free(output);
             free(args_copy);
         } else {
             printf("%s\n", clean_str);
@@ -477,8 +537,11 @@ int execute_instruction(int idx) {
             
             while (token) {
                 int val;
-                printf("Enter value for %s: ", token);
-                scanf("%d", &val);
+                printf(" %s: ", token);
+                if (scanf("%d", &val) != 1) {
+                    fprintf(stderr, "Error reading input for variable %s\n", token);
+                    val = 0;  // Default value on error
+                }
                 set_int_value(token, val);
                 token = strtok(NULL, ",");
             }
@@ -525,8 +588,8 @@ void execute_program() {
 // Print symbol table
 void print_symbol_table() {
     printf("\n=== Symbol Table ===\n");
-    printf("%-15s %-10s %-15s %-15s\n", "Name", "Type", "Value", "Initialized");
-    printf("-----------------------------------------------\n");
+    printf("%-15s %-10s %-15s %-15s %-10s\n", "Name", "Type", "Value", "Initialized", "IsArray");
+    printf("-------------------------------------------------------------\n");
     
     for (int i = 0; i < symbol_count; i++) {
         char value_str[20];
@@ -549,12 +612,13 @@ void print_symbol_table() {
             strcpy(value_str, "undefined");
         }
         
-        printf("%-15s %-10s %-15s %-15s\n", 
+        printf("%-15s %-10s %-15s %-15s %-10s\n", 
                symbol_table[i].name, 
                symbol_table[i].type == TYPE_INT ? "int" : 
                (symbol_table[i].type == TYPE_CHAR ? "char" : "unknown"),
                value_str,
-               symbol_table[i].initialized ? "yes" : "no");
+               symbol_table[i].initialized ? "yes" : "no",
+               symbol_table[i].is_array ? "yes" : "no");
     }
 }
 %}
@@ -903,7 +967,39 @@ VarDecList
 
 VarDeclaration
     : OB IDENTIFIER arrayDec COMMA type CB SEMICOLON {
-        declare_variable($2);
+        // Handle array declaration
+        int is_array = 0;
+        int array_size = 0;
+        char* base_name = strdup($2);
+        
+        // Check for the brackets in the identifier
+        char* bracket_pos = strchr(base_name, '[');
+        if (bracket_pos != NULL) {
+            *bracket_pos = '\0';  // Terminate the string at the bracket
+            is_array = 1;
+            
+            // Extract array size if available
+            char* size_str = bracket_pos + 1;
+            char* close_bracket = strchr(size_str, ']');
+            if (close_bracket) {
+                *close_bracket = '\0';
+                array_size = atoi(size_str);
+            }
+        }
+        
+        // Declare the variable
+        declare_variable(base_name);
+        
+        // If it's an array, update the symbol table entry
+        if (is_array) {
+            int idx = find_symbol(base_name);
+            if (idx >= 0) {
+                symbol_table[idx].is_array = 1;
+                symbol_table[idx].array_size = array_size;
+            }
+        }
+        
+        free(base_name);
     }
     ;
 
