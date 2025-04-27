@@ -73,7 +73,6 @@
 #include<stdlib.h>
 #include<string.h>
 #include<ctype.h>
-#include <errno.h>
 
 extern int yylex();
 extern int yyparse();
@@ -96,8 +95,52 @@ char *__if_else_L1, *__if_else_L2;
   /* above all your rules */
 char* current_for_step_temp;
 
+// ---- Extended symbol table for simulation ----
+typedef enum {
+    TYPE_INT,
+    TYPE_CHAR,
+    TYPE_UNKNOWN
+} VarType;
 
-// ---- Memory management ----
+typedef struct {
+    char* name;
+    VarType type;
+    union {
+        int int_val;
+        char char_val;
+    } value;
+    int initialized;  // Flag to track if variable has been initialized
+    int is_array;     // Flag to indicate if variable is an array
+    int array_size;   // Size of array (if is_array is true)
+} Symbol;
+
+#define MAX_SYMBOLS 1000
+#define MAX_TEMP_VARS 1000
+#define MAX_INSTRUCTIONS 5000
+
+Symbol symbol_table[MAX_SYMBOLS];
+Symbol temp_vars[MAX_TEMP_VARS];  // Store values for temporary variables
+int symbol_count = 0;
+
+// Instructions for simulation
+typedef struct {
+    char* result;
+    char* arg1;
+    char* op;
+    char* arg2;
+    int is_label;
+    int is_goto;
+    int is_cond_jump;
+    int is_print;
+    int is_scan;
+    char* label;
+    char* condition;
+} Instruction;
+
+Instruction instructions[MAX_INSTRUCTIONS];
+int instruction_count = 0;
+
+// Memory management ----
 char** allocated_memory = NULL;
 int allocated_count = 0;
 
@@ -113,7 +156,6 @@ void cleanup_memory() {
 }
 
 // ---- Temporary and Label Generators ----
-// Add these at the top of your .y file in the C code section
 int temp_var_counter = 1;  // For regular temp variables (t1, t2, etc.)
 int cond_var_counter = 1;  // For condition variables (t_cond1, t_cond2, etc.)
 
@@ -140,30 +182,84 @@ char* newLabel() {
     return label;
 }
 
-// ---- Emit TAC ----
+// ---- Emit TAC and store for simulation ----
 void emit(char* result, char* arg1, char* op, char* arg2) {
     if (arg2 && op) printf("%s := %s %s %s\n", result, arg1, op, arg2);
     else if (op)    printf("%s := %s %s\n", result, op, arg1);
     else            printf("%s := %s\n", result, arg1);
+    
+    // Store instruction for simulation
+    instructions[instruction_count].result = strdup(result);
+    instructions[instruction_count].arg1 = arg1 ? strdup(arg1) : NULL;
+    instructions[instruction_count].op = op ? strdup(op) : NULL;
+    instructions[instruction_count].arg2 = arg2 ? strdup(arg2) : NULL;
+    instructions[instruction_count].is_label = 0;
+    instructions[instruction_count].is_goto = 0;
+    instructions[instruction_count].is_cond_jump = 0;
+    instructions[instruction_count].is_print = 0;
+    instructions[instruction_count].is_scan = 0;
+    instructions[instruction_count].label = NULL;
+    instructions[instruction_count].condition = NULL;
+    instruction_count++;
 }
 
+void emitPrint(char* str, char* args) {
+    // Store print instruction
+    instructions[instruction_count].is_print = 1;
+    instructions[instruction_count].arg1 = strdup(str);
+    instructions[instruction_count].arg2 = args ? strdup(args) : NULL;
+    instruction_count++;
+}
+
+void emitScan(char* str, char* args) {
+    // Store scan instruction
+    instructions[instruction_count].is_scan = 1;
+    instructions[instruction_count].arg1 = strdup(str);
+    instructions[instruction_count].arg2 = args ? strdup(args) : NULL;
+    instruction_count++;
+}
 
 void emitCondJump(char* cond, char* label) {
     printf("if %s == 0 goto %s\n", cond, label);
+    
+    // Store conditional jump for simulation
+    instructions[instruction_count].is_cond_jump = 1;
+    instructions[instruction_count].condition = strdup(cond);
+    instructions[instruction_count].label = strdup(label);
+    instruction_count++;
 }
 
 void emitCondJumpTrue(char* cond, char* label) {
     printf("if %s == 1 goto %s\n", cond, label);
+    
+    // Store conditional jump for simulation
+    instructions[instruction_count].is_cond_jump = 1;
+    instructions[instruction_count].condition = strdup(cond);
+    instructions[instruction_count].label = strdup(label);
+    // This is a jump if true, so we need to invert our condition check in simulation
+    instructions[instruction_count].arg1 = strdup("true");
+    instruction_count++;
 }
 
 void emitGoto(char* label) {
     printf("goto %s\n", label);
+    
+    // Store goto for simulation
+    instructions[instruction_count].is_goto = 1;
+    instructions[instruction_count].label = strdup(label);
+    instruction_count++;
 }
 
 void emitLabel(char* label) {
     printf("%s:\n", label);
+    
+    // Store label for simulation
+    instructions[instruction_count].is_label = 1;
+    instructions[instruction_count].label = strdup(label);
+    instruction_count++;
 }
-// ---- Variable table for declarations ----
+
+// ---- Variable and symbol table management ----
 #define MAX_VARS 1000
 char* declared_vars[MAX_VARS];
 int var_count = 0;
@@ -184,6 +280,34 @@ int is_declared(const char* name) {
         if (strcmp(declared_vars[i], name) == 0)
             return 1;
     return 0;
+}
+
+// Find symbol by name in symbol table
+int find_symbol(const char* name) {
+    for (int i = 0; i < symbol_count; i++) {
+        if (strcmp(symbol_table[i].name, name) == 0)
+            return i;
+    }
+    return -1;
+}
+
+// Find temp variable
+int find_temp_var(const char* name) {
+    // Check if it's a temporary variable (t1, t2, etc.)
+    if (name[0] == 't' && (name[1] == '_' || isdigit(name[1]))) {
+        int idx = -1;
+        if (name[1] == '_') {
+            // Handle t_cond variables
+            sscanf(name, "t_cond%d", &idx);
+            if (idx > 0 && idx <= cond_var_counter)
+                return idx - 1;
+        } else {
+            sscanf(name, "t%d", &idx);
+            if (idx > 0 && idx <= temp_var_counter)
+                return idx - 1;
+        }
+    }
+    return -1;
 }
 
 void declare_variable(const char* name) {
@@ -217,6 +341,18 @@ void declare_variable(const char* name) {
     }
 
     declared_vars[var_count++] = strdup(name);
+    
+    // Also add to symbol table for simulation
+    if (symbol_count < MAX_SYMBOLS) {
+        symbol_table[symbol_count].name = strdup(name);
+        symbol_table[symbol_count].type = TYPE_UNKNOWN;
+        symbol_table[symbol_count].initialized = 0;
+        symbol_table[symbol_count].is_array = 0;
+        symbol_count++;
+    } else {
+        fprintf(stderr, "Error: Symbol table full\n");
+        exit(1);
+    }
 }
 
 char* getBaseOperator(char* op) {
@@ -229,179 +365,270 @@ char* getBaseOperator(char* op) {
     return strdup(op);
 }
 
-// Add these to the variable table section
-int var_values[MAX_VARS];     // Store integer values for simulation
-int var_initialized[MAX_VARS]; // Track if variables have been initialized
-int emit_tac = 1;  // 1 = emit TAC, 0 = simulate execution
-
-int get_var_index(const char* name) {
-    for (int i = 0; i < var_count; i++)
-        if (strcmp(declared_vars[i], name) == 0)
-            return i;
-    return -1;
-}
-
-// Set variable value for simulation
-void set_variable_value(const char* name, int value) {
-    int idx = get_var_index(name);
-    if (idx >= 0) {
-        var_values[idx] = value;
-        var_initialized[idx] = 1;  // Mark as initialized
+// ---- Simulation functions ----
+// Get integer value of a variable or literal
+int get_int_value(const char* name) {
+    // Check if it's a literal number
+    if (isdigit(name[0]) || (name[0] == '-' && isdigit(name[1]))) {
+        return atoi(name);
     }
-}
-
-// Get variable value for simulation
-int get_variable_value(const char* name) {
-    int idx = get_var_index(name);
+    
+    // Check symbol table
+    int idx = find_symbol(name);
     if (idx >= 0) {
-        if (!var_initialized[idx]) {
-            fprintf(stderr, "Semantic error at line %d: Variable '%s' used before initialization.\n", yylineno, name);
+        if (!symbol_table[idx].initialized) {
+            fprintf(stderr, "Semantic error: Using uninitialized variable '%s'\n", name);
             exit(1);
         }
-        return var_values[idx];
+        return symbol_table[idx].value.int_val;
     }
-    fprintf(stderr, "Internal error: Tried to get value of undeclared variable '%s'.\n", name);
+    
+    // Check temp variables
+    idx = find_temp_var(name);
+    if (idx >= 0) {
+        return temp_vars[idx].value.int_val;
+    }
+    
+    fprintf(stderr, "Semantic error: Undefined variable '%s'\n", name);
+    exit(1);
+    return 0;  // never reached
+}
+
+// Set integer value of a variable
+void set_int_value(const char* name, int value) {
+    // Check if it's a temporary variable
+    int idx = find_temp_var(name);
+    if (idx >= 0) {
+        temp_vars[idx].value.int_val = value;
+        temp_vars[idx].initialized = 1;
+        temp_vars[idx].type = TYPE_INT;
+        return;
+    }
+    
+    // Check symbol table
+    idx = find_symbol(name);
+    if (idx >= 0) {
+        symbol_table[idx].value.int_val = value;
+        symbol_table[idx].initialized = 1;
+        symbol_table[idx].type = TYPE_INT;
+        return;
+    }
+    
+    fprintf(stderr, "Semantic error: Undefined variable '%s'\n", name);
     exit(1);
 }
 
-// Get variable value safely for simulation
-int get_value(const char* str) {
-    // Check if it's a number
-    if (isdigit(str[0]) || (str[0] == '-' && isdigit(str[1])))
-        return atoi(str);
+// Perform arithmetic operation
+int perform_op(int left, const char* op, int right) {
+    if (strcmp(op, "+") == 0) return left + right;
+    if (strcmp(op, "-") == 0) return left - right;
+    if (strcmp(op, "*") == 0) return left * right;
+    if (strcmp(op, "/") == 0) {
+        if (right == 0) {
+            fprintf(stderr, "Semantic error: Division by zero\n");
+            exit(1);
+        }
+        return left / right;
+    }
+    if (strcmp(op, "%") == 0) {
+        if (right == 0) {
+            fprintf(stderr, "Semantic error: Modulo by zero\n");
+            exit(1);
+        }
+        return left % right;
+    }
+    if (strcmp(op, "and") == 0) return left && right;
+    if (strcmp(op, "or") == 0) return left || right;
     
-    // Otherwise it's a variable
-    return get_variable_value(str);
+    // Comparison operations
+    if (strcmp(op, "=") == 0) return left == right;
+    if (strcmp(op, "!=") == 0) return left != right;
+    if (strcmp(op, ">") == 0) return left > right;
+    if (strcmp(op, ">=") == 0) return left >= right;
+    if (strcmp(op, "<") == 0) return left < right;
+    if (strcmp(op, "<=") == 0) return left <= right;
+    
+    fprintf(stderr, "Semantic error: Unknown operator '%s'\n", op);
+    exit(1);
+    return 0;
+}
+
+// Execute a single instruction
+void execute_instruction(int idx) {
+    Instruction* instr = &instructions[idx];
+    
+    // Handle label (no action needed, just for jumps)
+    if (instr->is_label) return;
+    
+    // Handle goto
+    if (instr->is_goto) {
+        // Find the label
+        for (int i = 0; i < instruction_count; i++) {
+            if (instructions[i].is_label && strcmp(instructions[i].label, instr->label) == 0) {
+                return i;  // Return the index to jump to
+            }
+        }
+        fprintf(stderr, "Runtime error: Label '%s' not found\n", instr->label);
+        exit(1);
+    }
+    
+    // Handle conditional jump
+    if (instr->is_cond_jump) {
+        int condition_value = get_int_value(instr->condition);
+        if (instr->arg1 && strcmp(instr->arg1, "true") == 0) {
+            // Jump if true (condition == 1)
+            if (condition_value == 1) {
+                // Find the label
+                for (int i = 0; i < instruction_count; i++) {
+                    if (instructions[i].is_label && strcmp(instructions[i].label, instr->label) == 0) {
+                        return i;  // Return the index to jump to
+                    }
+                }
+            }
+        } else {
+            // Jump if false (condition == 0)
+            if (condition_value == 0) {
+                // Find the label
+                for (int i = 0; i < instruction_count; i++) {
+                    if (instructions[i].is_label && strcmp(instructions[i].label, instr->label) == 0) {
+                        return i;  // Return the index to jump to
+                    }
+                }
+            }
+        }
+        return idx + 1;  // Continue to next instruction
+    }
+    
+    // Handle print
+    if (instr->is_print) {
+        // Extract string without quotes
+        char* str = instr->arg1;
+        int len = strlen(str);
+        char* clean_str = malloc(len - 1);
+        strncpy(clean_str, str + 1, len - 2);
+        clean_str[len - 2] = '\0';
+        
+        if (instr->arg2) {
+            // Handle format args
+            char* args_copy = strdup(instr->arg2);
+            char* token = strtok(args_copy, ",");
+            char format[100];
+            strcpy(format, clean_str);
+            
+            // TODO: Implement proper formatting with arguments
+            while (token) {
+                int val = get_int_value(token);
+                printf("%s: %d\n", token, val);
+                token = strtok(NULL, ",");
+            }
+            free(args_copy);
+        } else {
+            printf("%s\n", clean_str);
+        }
+        free(clean_str);
+        return idx + 1;
+    }
+    
+    // Handle scan
+    if (instr->is_scan) {
+        // Extract string without quotes
+        char* str = instr->arg1;
+        int len = strlen(str);
+        char* clean_str = malloc(len - 1);
+        strncpy(clean_str, str + 1, len - 2);
+        clean_str[len - 2] = '\0';
+        
+        printf("%s", clean_str);
+        
+        if (instr->arg2) {
+            // Handle variables
+            char* args_copy = strdup(instr->arg2);
+            char* token = strtok(args_copy, ",");
+            
+            while (token) {
+                int val;
+                printf("Enter value for %s: ", token);
+                scanf("%d", &val);
+                set_int_value(token, val);
+                token = strtok(NULL, ",");
+            }
+            free(args_copy);
+        }
+        free(clean_str);
+        return idx + 1;
+    }
+    
+    // Handle assignment and operations
+    if (instr->result) {
+        if (instr->op) {
+            if (strcmp(instr->op, "not") == 0) {
+                // Unary operation
+                int val = get_int_value(instr->arg1);
+                set_int_value(instr->result, !val);
+            } else if (instr->arg2) {
+                // Binary operation
+                int left = get_int_value(instr->arg1);
+                int right = get_int_value(instr->arg2);
+                int result = perform_op(left, instr->op, right);
+                set_int_value(instr->result, result);
+            }
+        } else if (instr->arg1) {
+            // Simple assignment
+            int val = get_int_value(instr->arg1);
+            set_int_value(instr->result, val);
+        }
+    }
+    
+    return idx + 1;  // Continue to next instruction
+}
+
+// Execute the program
+void execute_program() {
+    printf("\n=== Program Output ===\n");
+    
+    int pc = 0;  // Program counter
+    while (pc < instruction_count) {
+        pc = execute_instruction(pc);
+    }
 }
 
 // Print symbol table
 void print_symbol_table() {
-    printf("\n===== Symbol Table =====\n");
-    printf("Variable\tValue\tInitialized\n");
-    printf("--------------------------------\n");
-    for (int i = 0; i < var_count; i++) {
-        printf("%s\t\t%d\t%s\n", 
-               declared_vars[i], 
-               var_values[i], 
-               var_initialized[i] ? "Yes" : "No");
-    }
-    printf("================================\n");
-}
-
-// Handle print statement simulation
-void simulate_print(char* format, char* args) {
-    printf("PROGRAM OUTPUT: ");
+    printf("\n=== Symbol Table ===\n");
+    printf("%-15s %-10s %-15s %-15s\n", "Name", "Type", "Value", "Initialized");
+    printf("-----------------------------------------------\n");
     
-    // Simple format string handling
-    char* fmt = strdup(format);
-    fmt[strlen(fmt)-1] = '\0';  // Remove trailing quote
-    fmt++;  // Skip leading quote
-    
-    if (!args) {
-        printf("%s\n", fmt);
-        return;
-    }
-    
-    // Very simple arg handling - just replace %d with values
-    char* arg_list = strdup(args);
-    char* token = strtok(arg_list, ",");
-    char* fmt_ptr = fmt;
-    
-    while (*fmt_ptr) {
-        if (*fmt_ptr == '%' && *(fmt_ptr+1) == 'd') {
-            if (token) {
-                printf("%d", get_value(token));
-                token = strtok(NULL, ",");
-                fmt_ptr += 2;
+    for (int i = 0; i < symbol_count; i++) {
+        char value_str[20];
+        
+        if (symbol_table[i].initialized) {
+            if (symbol_table[i].type == TYPE_INT) {
+                sprintf(value_str, "%d", symbol_table[i].value.int_val);
+            } else if (symbol_table[i].type == TYPE_CHAR) {
+                if (symbol_table[i].value.char_val == '\n') {
+                    strcpy(value_str, "'\\n'");
+                } else if (symbol_table[i].value.char_val == '\t') {
+                    strcpy(value_str, "'\\t'");
+                } else {
+                    sprintf(value_str, "'%c'", symbol_table[i].value.char_val);
+                }
             } else {
-                fprintf(stderr, "Error: Not enough arguments for format string\n");
-                exit(1);
+                strcpy(value_str, "unknown");
             }
         } else {
-            printf("%c", *fmt_ptr);
-            fmt_ptr++;
+            strcpy(value_str, "undefined");
         }
+        
+        printf("%-15s %-10s %-15s %-15s\n", 
+               symbol_table[i].name, 
+               symbol_table[i].type == TYPE_INT ? "int" : 
+               (symbol_table[i].type == TYPE_CHAR ? "char" : "unknown"),
+               value_str,
+               symbol_table[i].initialized ? "yes" : "no");
     }
-    printf("\n");
-    
-    free(arg_list);
-    free(fmt);
 }
 
-// Handle scan statement simulation
-void simulate_scan(char* format, char* args) {
-    printf("SCAN: Reading input values for: %s\n", args);
-    
-    char* arg_list = strdup(args);
-    char* token = strtok(arg_list, ",");
-    
-    while (token) {
-        int value;
-        printf("Enter value for %s: ", token);
-        if (scanf("%d", &value) != 1) {
-            fprintf(stderr, "Error reading input\n");
-            exit(1);
-        }
-        set_variable_value(token, value);
-        token = strtok(NULL, ",");
-    }
-    
-    free(arg_list);
-}
-
-// Process assignment with operator
-int process_assignment(char* var, char* op, char* expr) {
-    int idx = get_var_index(var);
-    int val = get_value(expr);
-    
-    if (strcmp(op, ":=") == 0) {
-        var_values[idx] = val;
-    } else if (strcmp(op, "+=") == 0) {
-        if (!var_initialized[idx]) {
-            fprintf(stderr, "Semantic error at line %d: Variable '%s' used before initialization.\n", yylineno, var);
-            exit(1);
-        }
-        var_values[idx] += val;
-    } else if (strcmp(op, "-=") == 0) {
-        if (!var_initialized[idx]) {
-            fprintf(stderr, "Semantic error at line %d: Variable '%s' used before initialization.\n", yylineno, var);
-            exit(1);
-        }
-        var_values[idx] -= val;
-    } else if (strcmp(op, "*=") == 0) {
-        if (!var_initialized[idx]) {
-            fprintf(stderr, "Semantic error at line %d: Variable '%s' used before initialization.\n", yylineno, var);
-            exit(1);
-        }
-        var_values[idx] *= val;
-    } else if (strcmp(op, "/=") == 0) {
-        if (!var_initialized[idx]) {
-            fprintf(stderr, "Semantic error at line %d: Variable '%s' used before initialization.\n", yylineno, var);
-            exit(1);
-        }
-        if (val == 0) {
-            fprintf(stderr, "Runtime error at line %d: Division by zero.\n", yylineno);
-            exit(1);
-        }
-        var_values[idx] /= val;
-    } else if (strcmp(op, "%=") == 0) {
-        if (!var_initialized[idx]) {
-            fprintf(stderr, "Semantic error at line %d: Variable '%s' used before initialization.\n", yylineno, var);
-            exit(1);
-        }
-        if (val == 0) {
-            fprintf(stderr, "Runtime error at line %d: Modulo by zero.\n", yylineno);
-            exit(1);
-        }
-        var_values[idx] %= val;
-    }
-    
-    // Mark the variable as initialized
-    var_initialized[idx] = 1;
-    return var_values[idx];
-}
-
-#line 405 "myparser.tab.c"
+#line 632 "myparser.tab.c"
 
 # ifndef YY_CAST
 #  ifdef __cplusplus
@@ -499,26 +726,28 @@ enum yysymbol_kind_t
   YYSYMBOL_for_stmt = 67,                  /* for_stmt  */
   YYSYMBOL_68_2 = 68,                      /* $@2  */
   YYSYMBOL_if_cond = 69,                   /* if_cond  */
-  YYSYMBOL_expression = 70,                /* expression  */
-  YYSYMBOL_term = 71,                      /* term  */
-  YYSYMBOL_factor = 72,                    /* factor  */
-  YYSYMBOL_identifier = 73,                /* identifier  */
-  YYSYMBOL_bool_expr = 74,                 /* bool_expr  */
-  YYSYMBOL_condition = 75,                 /* condition  */
-  YYSYMBOL_relop = 76,                     /* relop  */
-  YYSYMBOL_block = 77,                     /* block  */
-  YYSYMBOL_for_dir = 78,                   /* for_dir  */
-  YYSYMBOL_for_step = 79,                  /* for_step  */
-  YYSYMBOL_print = 80,                     /* print  */
-  YYSYMBOL_scan = 81,                      /* scan  */
-  YYSYMBOL_formatArgs = 82,                /* formatArgs  */
-  YYSYMBOL_argList = 83,                   /* argList  */
-  YYSYMBOL_value = 84,                     /* value  */
-  YYSYMBOL_varDecBlock = 85,               /* varDecBlock  */
-  YYSYMBOL_VarDecList = 86,                /* VarDecList  */
-  YYSYMBOL_VarDeclaration = 87,            /* VarDeclaration  */
-  YYSYMBOL_arrayDec = 88,                  /* arrayDec  */
-  YYSYMBOL_type = 89                       /* type  */
+  YYSYMBOL_70_3 = 70,                      /* $@3  */
+  YYSYMBOL_71_4 = 71,                      /* $@4  */
+  YYSYMBOL_expression = 72,                /* expression  */
+  YYSYMBOL_term = 73,                      /* term  */
+  YYSYMBOL_factor = 74,                    /* factor  */
+  YYSYMBOL_identifier = 75,                /* identifier  */
+  YYSYMBOL_bool_expr = 76,                 /* bool_expr  */
+  YYSYMBOL_condition = 77,                 /* condition  */
+  YYSYMBOL_relop = 78,                     /* relop  */
+  YYSYMBOL_block = 79,                     /* block  */
+  YYSYMBOL_for_dir = 80,                   /* for_dir  */
+  YYSYMBOL_for_step = 81,                  /* for_step  */
+  YYSYMBOL_print = 82,                     /* print  */
+  YYSYMBOL_scan = 83,                      /* scan  */
+  YYSYMBOL_formatArgs = 84,                /* formatArgs  */
+  YYSYMBOL_argList = 85,                   /* argList  */
+  YYSYMBOL_value = 86,                     /* value  */
+  YYSYMBOL_varDecBlock = 87,               /* varDecBlock  */
+  YYSYMBOL_VarDecList = 88,                /* VarDecList  */
+  YYSYMBOL_VarDeclaration = 89,            /* VarDeclaration  */
+  YYSYMBOL_arrayDec = 90,                  /* arrayDec  */
+  YYSYMBOL_type = 91                       /* type  */
 };
 typedef enum yysymbol_kind_t yysymbol_kind_t;
 
@@ -846,16 +1075,16 @@ union yyalloc
 /* YYFINAL -- State number of the termination state.  */
 #define YYFINAL  4
 /* YYLAST -- Last index in YYTABLE.  */
-#define YYLAST   152
+#define YYLAST   133
 
 /* YYNTOKENS -- Number of terminals.  */
 #define YYNTOKENS  59
 /* YYNNTS -- Number of nonterminals.  */
-#define YYNNTS  31
+#define YYNNTS  33
 /* YYNRULES -- Number of rules.  */
-#define YYNRULES  72
+#define YYNRULES  71
 /* YYNSTATES -- Number of states.  */
-#define YYNSTATES  152
+#define YYNSTATES  143
 
 /* YYMAXUTOK -- Last valid token kind.  */
 #define YYMAXUTOK   313
@@ -910,14 +1139,14 @@ static const yytype_int8 yytranslate[] =
 /* YYRLINE[YYN] -- Source line where rule number YYN was defined.  */
 static const yytype_int16 yyrline[] =
 {
-       0,   379,   379,   383,   389,   390,   394,   395,   396,   397,
-     398,   399,   400,   401,   404,   428,   429,   430,   431,   432,
-     433,   437,   437,   460,   460,   540,   552,   566,   570,   584,
-     601,   605,   619,   637,   658,   662,   676,   693,   698,   709,
-     716,   736,   740,   754,   768,   785,   814,   815,   816,   817,
-     818,   819,   823,   827,   831,   838,   842,   857,   869,   870,
-     874,   884,   903,   909,   913,   926,   930,   931,   935,   953,
-     954,   964,   965
+       0,   601,   601,   604,   610,   611,   615,   616,   617,   618,
+     619,   620,   621,   622,   625,   639,   640,   641,   642,   643,
+     644,   651,   650,   675,   673,   726,   733,   725,   750,   751,
+     755,   762,   763,   767,   771,   778,   779,   780,   781,   785,
+     795,   796,   800,   804,   811,   823,   824,   825,   826,   827,
+     828,   832,   837,   838,   842,   851,   863,   871,   872,   876,
+     879,   888,   889,   890,   896,   900,   901,   905,   911,   912,
+     916,   917
 };
 #endif
 
@@ -943,9 +1172,9 @@ static const char *const yytname[] =
   "ADD", "SUB", "DIV", "MOD", "EQ", "GT", "LT", "GE", "LE", "NE", "AND",
   "OR", "NOT", "LOWER_THAN_ELSE", "$accept", "program", "statementBlock",
   "statement", "assignment", "assignment_op", "while_loop", "$@1",
-  "for_stmt", "$@2", "if_cond", "expression", "term", "factor",
-  "identifier", "bool_expr", "condition", "relop", "block", "for_dir",
-  "for_step", "print", "scan", "formatArgs", "argList", "value",
+  "for_stmt", "$@2", "if_cond", "$@3", "$@4", "expression", "term",
+  "factor", "identifier", "bool_expr", "condition", "relop", "block",
+  "for_dir", "for_step", "print", "scan", "formatArgs", "argList", "value",
   "varDecBlock", "VarDecList", "VarDeclaration", "arrayDec", "type", YY_NULLPTR
 };
 
@@ -956,7 +1185,7 @@ yysymbol_name (yysymbol_kind_t yysymbol)
 }
 #endif
 
-#define YYPACT_NINF (-89)
+#define YYPACT_NINF (-93)
 
 #define yypact_value_is_default(Yyn) \
   ((Yyn) == YYPACT_NINF)
@@ -968,24 +1197,23 @@ yysymbol_name (yysymbol_kind_t yysymbol)
 
 /* YYPACT[STATE-NUM] -- Index in YYTABLE of the portion describing
    STATE-NUM.  */
-static const yytype_int16 yypact[] =
+static const yytype_int8 yypact[] =
 {
-      30,     7,    24,     1,   -89,    36,    29,    61,    19,    10,
-      61,    17,    25,    68,    42,    43,    20,    61,    51,    58,
-      72,    80,    74,    82,   -89,   -89,    50,     4,   108,     0,
-       0,    93,   114,   116,   -89,   112,   -89,   -89,   -89,   -89,
-     -89,   -89,   -89,   -89,   -89,   -89,   -89,     4,   -89,   119,
-     115,    50,   -89,   -89,     8,    -2,    31,   -89,   -89,   -89,
-       0,    45,   -24,   -89,    13,     4,    90,    91,   -89,    26,
-      92,   118,   -89,    95,    15,   -89,     4,     4,     4,     4,
-       4,   -89,   -89,   -89,   -89,   -89,   -89,   -89,     4,     5,
-       0,     0,   113,     6,   101,    85,   101,   124,    98,   -89,
-     127,   -89,    31,    31,   -89,   -89,   -89,    26,   128,   122,
-     -89,    83,   -89,     4,   -89,   -89,   -89,   -89,   103,   105,
-      99,   106,    57,   100,   131,   128,   128,     9,   101,   -89,
-     111,   -89,   -89,   -89,   104,   -89,   128,   -89,   -89,   -89,
-     -89,     4,   -89,   -89,   117,   -89,    26,   121,   -89,   -89,
-     128,   -89
+      12,    16,    39,    -9,   -93,    49,    36,    56,    29,   -93,
+      56,    26,    28,    69,    37,    57,    13,    56,    65,    67,
+      70,    71,    25,    72,   -93,   -93,    59,    74,     0,     0,
+      77,    98,   102,   -93,    99,   -93,   -93,   -93,   -93,   -93,
+     -93,   -93,   -93,   -93,   -93,   -93,     8,   -93,   104,   101,
+      59,   -93,   -93,   -93,     8,     0,    42,    -3,   -93,   -93,
+     -26,   -93,   -21,     8,    76,    78,   -93,    -8,    79,   103,
+     -93,    21,   -93,     8,     8,   -93,   -93,   -93,   -93,   -93,
+     -93,     8,     8,     8,     8,   -93,     0,     0,    97,   -13,
+      68,    75,    68,   116,    84,   -93,   -93,    -3,    -3,    -8,
+     -93,   -93,   -93,   112,   -93,    73,   -93,     8,   -93,   -93,
+     -93,   -93,    86,    88,    81,    87,    66,   -93,   112,     1,
+      68,   -93,    91,   -93,   -93,   -93,    89,   113,   -93,   -93,
+     -93,     8,   -93,   -93,    94,   112,    -8,   110,   -93,   -93,
+     -93,   112,   -93
 };
 
 /* YYDEFACT[STATE-NUM] -- Default reduction number in state STATE-NUM.
@@ -996,37 +1224,36 @@ static const yytype_int8 yydefact[] =
        0,     0,     0,     0,     1,     0,     0,     4,     0,    39,
        4,     0,     0,     0,     0,     0,     0,     4,     0,     0,
        0,     0,     0,    12,    10,    11,     0,     0,     0,     0,
-       0,     0,     0,     0,     3,     0,     5,     6,     8,     9,
-       7,    15,    16,    17,    18,    19,    20,     0,    13,     0,
-       0,    66,    38,    37,     0,     0,    27,    30,    36,    52,
-       0,     0,     0,    41,     0,     0,    58,     0,     2,    14,
-      69,     0,    67,    37,     0,    40,     0,     0,     0,     0,
-       0,    44,    46,    48,    50,    49,    51,    47,     0,     0,
-       0,     0,     0,     0,     0,     0,     0,     0,     0,    65,
-       0,    34,    28,    29,    31,    32,    33,    45,     0,     0,
-      42,    43,    21,     0,    64,    63,    62,    59,    60,     0,
-       0,     0,     0,     0,     0,     0,     0,     0,     0,    56,
-       0,    70,    71,    72,     0,    35,     0,    25,    22,    53,
-      54,     0,    61,    57,     0,    26,    55,     0,    68,    23,
-       0,    24
+       0,     0,     0,     3,     0,     5,     6,     8,     9,     7,
+      15,    16,    17,    18,    19,    20,     0,    13,     0,     0,
+      65,    51,    38,    37,     0,     0,     0,    28,    31,    36,
+       0,    40,     0,     0,    57,     0,     2,    14,    68,     0,
+      66,     0,    43,     0,     0,    45,    47,    49,    48,    50,
+      46,     0,     0,     0,     0,    25,     0,     0,     0,     0,
+       0,     0,     0,     0,     0,    64,    35,    29,    30,    44,
+      32,    33,    34,     0,    41,    42,    21,     0,    63,    62,
+      61,    58,    59,     0,     0,     0,     0,    26,     0,     0,
+       0,    55,     0,    69,    70,    71,     0,     0,    22,    52,
+      53,     0,    60,    56,     0,     0,    54,     0,    67,    27,
+      23,     0,    24
 };
 
 /* YYPGOTO[NTERM-NUM].  */
 static const yytype_int8 yypgoto[] =
 {
-     -89,   -89,    16,   -89,   -89,   -89,   -89,   -89,   -89,   -89,
-     -89,   -25,    37,    32,    -7,   -26,   -89,   -89,   -88,   -89,
-     -89,   -89,   -89,   -89,   -79,   -89,   -89,    97,   -89,   -89,
-     -89
+     -93,   -93,    14,   -93,   -93,   -93,   -93,   -93,   -93,   -93,
+     -93,   -93,   -93,   -45,    24,    -2,    -7,   -27,   -93,   -93,
+     -92,   -93,   -93,   -93,   -93,   -93,   -80,   -93,   -93,    83,
+     -93,   -93,   -93
 };
 
 /* YYDEFGOTO[NTERM-NUM].  */
 static const yytype_uint8 yydefgoto[] =
 {
-       0,     2,    16,    17,    18,    47,    19,   126,    20,   150,
-      21,    61,    56,    57,    58,    62,    63,    88,    23,   141,
-     147,    24,    25,    95,   117,   118,     7,    50,    51,    98,
-     134
+       0,     2,    16,    17,    18,    46,    19,   118,    20,   141,
+      21,   103,   127,    56,    57,    58,    59,    60,    61,    81,
+      23,   131,   137,    24,    25,    91,   111,   112,     7,    49,
+      50,    94,   126
 };
 
 /* YYTABLE[YYPACT[STATE-NUM]] -- What to do in state STATE-NUM.  If
@@ -1034,64 +1261,59 @@ static const yytype_uint8 yydefgoto[] =
    number is the opposite.  If YYTABLE_NINF, syntax error.  */
 static const yytype_uint8 yytable[] =
 {
-      22,   109,    55,    22,    64,     9,    31,    52,    53,     9,
-      22,    52,    53,     9,    10,    52,    73,   120,     3,    89,
-     124,    34,    69,   113,     4,   108,    28,   139,   140,    74,
-      35,    90,    91,    36,    81,     5,    75,   137,   138,     1,
-      93,     8,    54,    76,    77,     6,    54,    27,   145,   142,
-      54,    76,    77,    26,    76,    77,    92,    60,   101,    29,
-      76,    77,   151,   107,   110,   111,     9,    30,    90,    91,
-      10,    76,    77,     9,    11,    78,    12,    13,    79,    80,
-     132,   133,    14,    15,    32,    33,    37,   116,   127,   116,
-      76,    77,    49,    38,    82,    83,    84,    85,    86,    87,
-      41,    42,    43,    44,    45,    46,     9,    39,   114,   115,
-     104,   105,   106,   102,   103,    40,   146,    48,    59,    65,
-      66,   116,    67,    68,    70,    71,    94,    96,   119,    97,
-      99,   100,   121,   112,   122,   123,   125,    10,    90,   128,
-     129,   149,   130,   135,   131,   136,   143,   144,    72,     0,
-       0,     0,   148
+      22,    67,    62,    22,   107,     9,    30,    52,    53,    71,
+      22,   117,   114,     9,    33,    52,    53,    85,    89,   129,
+     130,     1,    88,    34,    27,     5,   128,     3,    72,    86,
+      87,    35,    73,    74,    86,    87,    99,    73,    74,     4,
+     132,    82,    54,   139,    83,    84,    73,    74,     8,   142,
+      54,    40,    41,    42,    43,    44,    45,    55,     6,   104,
+     105,     9,   119,    26,    96,    10,    73,    74,    28,    11,
+      29,    12,    13,     9,     9,   108,   109,    14,    15,    31,
+     100,   101,   102,   110,    51,   110,   136,    73,    74,   124,
+     125,    75,    76,    77,    78,    79,    80,    97,    98,    32,
+      36,    48,    37,    63,    64,    38,    39,    47,    65,    68,
+      66,    69,    90,   110,    92,    95,    93,   106,   113,   115,
+     116,    10,   120,   121,   122,   123,   133,   135,    86,   138,
+     140,     0,   134,    70
 };
 
 static const yytype_int16 yycheck[] =
 {
-       7,    89,    27,    10,    30,     5,    13,     7,     8,     5,
-      17,     7,     8,     5,     9,     7,     8,    96,    11,    43,
-     108,     1,    47,    17,     0,    20,    10,    18,    19,    54,
-      10,    55,    56,    17,    60,    34,    38,   125,   126,     9,
-      65,    12,    42,    45,    46,     9,    42,    37,   136,   128,
-      42,    45,    46,    34,    45,    46,    43,    57,    43,    42,
-      45,    46,   150,    88,    90,    91,     5,    42,    55,    56,
-       9,    45,    46,     5,    13,    44,    15,    16,    47,    48,
-      23,    24,    21,    22,    42,    42,    35,    94,   113,    96,
-      45,    46,    42,    35,    49,    50,    51,    52,    53,    54,
-      26,    27,    28,    29,    30,    31,     5,    35,     7,     8,
-      78,    79,    80,    76,    77,    35,   141,    35,    10,    26,
-       6,   128,     6,    11,     5,    10,    36,    36,    43,    37,
-      12,    36,     8,    20,    36,     8,    14,     9,    55,    36,
-      35,    20,    43,    43,    38,    14,    35,    43,    51,    -1,
-      -1,    -1,    35
+       7,    46,    29,    10,    17,     5,    13,     7,     8,    54,
+      17,   103,    92,     5,     1,     7,     8,    43,    63,    18,
+      19,     9,    43,    10,    10,    34,   118,    11,    55,    55,
+      56,    17,    45,    46,    55,    56,    81,    45,    46,     0,
+     120,    44,    42,   135,    47,    48,    45,    46,    12,   141,
+      42,    26,    27,    28,    29,    30,    31,    57,     9,    86,
+      87,     5,   107,    34,    43,     9,    45,    46,    42,    13,
+      42,    15,    16,     5,     5,     7,     8,    21,    22,    42,
+      82,    83,    84,    90,    10,    92,   131,    45,    46,    23,
+      24,    49,    50,    51,    52,    53,    54,    73,    74,    42,
+      35,    42,    35,    26,     6,    35,    35,    35,     6,     5,
+      11,    10,    36,   120,    36,    12,    37,    20,    43,     3,
+      36,     9,    36,    35,    43,    38,    35,    14,    55,    35,
+      20,    -1,    43,    50
 };
 
 /* YYSTOS[STATE-NUM] -- The symbol kind of the accessing symbol of
    state STATE-NUM.  */
 static const yytype_int8 yystos[] =
 {
-       0,     9,    60,    11,     0,    34,     9,    85,    12,     5,
+       0,     9,    60,    11,     0,    34,     9,    87,    12,     5,
        9,    13,    15,    16,    21,    22,    61,    62,    63,    65,
-      67,    69,    73,    77,    80,    81,    34,    37,    61,    42,
-      42,    73,    42,    42,     1,    10,    61,    35,    35,    35,
-      35,    26,    27,    28,    29,    30,    31,    64,    35,    42,
-      86,    87,     7,     8,    42,    70,    71,    72,    73,    10,
-      57,    70,    74,    75,    74,    26,     6,     6,    11,    70,
-       5,    10,    86,     8,    70,    38,    45,    46,    44,    47,
-      48,    74,    49,    50,    51,    52,    53,    54,    76,    43,
-      55,    56,    43,    70,    36,    82,    36,    37,    88,    12,
-      36,    43,    71,    71,    72,    72,    72,    70,    20,    77,
-      74,    74,    20,    17,     7,     8,    73,    83,    84,    43,
-      83,     8,    36,     8,    77,    14,    66,    70,    36,    35,
-      43,    38,    23,    24,    89,    43,    14,    77,    77,    18,
-      19,    78,    83,    35,    43,    77,    70,    79,    35,    20,
-      68,    77
+      67,    69,    75,    79,    82,    83,    34,    61,    42,    42,
+      75,    42,    42,     1,    10,    61,    35,    35,    35,    35,
+      26,    27,    28,    29,    30,    31,    64,    35,    42,    88,
+      89,    10,     7,     8,    42,    57,    72,    73,    74,    75,
+      76,    77,    76,    26,     6,     6,    11,    72,     5,    10,
+      88,    72,    76,    45,    46,    49,    50,    51,    52,    53,
+      54,    78,    44,    47,    48,    43,    55,    56,    43,    72,
+      36,    84,    36,    37,    90,    12,    43,    73,    73,    72,
+      74,    74,    74,    70,    76,    76,    20,    17,     7,     8,
+      75,    85,    86,    43,    85,     3,    36,    79,    66,    72,
+      36,    35,    43,    38,    23,    24,    91,    71,    79,    18,
+      19,    80,    85,    35,    43,    14,    72,    81,    35,    79,
+      20,    68,    79
 };
 
 /* YYR1[RULE-NUM] -- Symbol kind of the left-hand side of rule RULE-NUM.  */
@@ -1099,12 +1321,12 @@ static const yytype_int8 yyr1[] =
 {
        0,    59,    60,    60,    61,    61,    62,    62,    62,    62,
       62,    62,    62,    62,    63,    64,    64,    64,    64,    64,
-      64,    66,    65,    68,    67,    69,    69,    70,    70,    70,
-      71,    71,    71,    71,    72,    72,    72,    72,    72,    73,
-      73,    74,    74,    74,    74,    75,    76,    76,    76,    76,
-      76,    76,    77,    78,    78,    79,    80,    81,    82,    82,
-      83,    83,    84,    84,    84,    85,    86,    86,    87,    88,
-      88,    89,    89
+      64,    66,    65,    68,    67,    70,    71,    69,    72,    72,
+      72,    73,    73,    73,    73,    74,    74,    74,    74,    75,
+      76,    76,    76,    76,    77,    78,    78,    78,    78,    78,
+      78,    79,    80,    80,    81,    82,    83,    84,    84,    85,
+      85,    86,    86,    86,    87,    88,    88,    89,    90,    90,
+      91,    91
 };
 
 /* YYR2[RULE-NUM] -- Number of symbols on the right-hand side of rule RULE-NUM.  */
@@ -1112,12 +1334,12 @@ static const yytype_int8 yyr2[] =
 {
        0,     2,     7,     6,     0,     2,     2,     2,     2,     2,
        1,     1,     1,     2,     3,     1,     1,     1,     1,     1,
-       1,     0,     7,     0,    11,     7,     8,     1,     3,     3,
-       1,     3,     3,     3,     3,     5,     1,     1,     1,     1,
-       4,     1,     3,     3,     2,     3,     1,     1,     1,     1,
-       1,     1,     3,     1,     1,     1,     6,     7,     0,     2,
-       1,     3,     1,     1,     1,     6,     1,     2,     7,     0,
-       3,     1,     1
+       1,     0,     7,     0,    11,     0,     0,     9,     1,     3,
+       3,     1,     3,     3,     3,     3,     1,     1,     1,     1,
+       1,     3,     3,     2,     3,     1,     1,     1,     1,     1,
+       1,     3,     1,     1,     1,     6,     7,     0,     2,     1,
+       3,     1,     1,     1,     6,     1,     2,     7,     0,     3,
+       1,     1
 };
 
 
@@ -1581,773 +1803,454 @@ yyreduce:
   switch (yyn)
     {
   case 2: /* program: BEGIN_TOKEN PROGRAM COLON varDecBlock statementBlock END_TOKEN PROGRAM  */
-#line 379 "myparser.y"
+#line 601 "myparser.y"
                                                                              {
-        printf("\nProgram parsing and TAC generation completed successfully.\n");
-        print_symbol_table();
+        printf("Parsing and TAC generation completed successfully.\n");
     }
-#line 1590 "myparser.tab.c"
+#line 1811 "myparser.tab.c"
     break;
 
   case 3: /* program: BEGIN_TOKEN PROGRAM COLON varDecBlock statementBlock error  */
-#line 383 "myparser.y"
+#line 604 "myparser.y"
                                                                  {
         printf("Warning: Syntax error near the end of the program. TAC generation may be incomplete.\n");
         yyerrok;
     }
-#line 1599 "myparser.tab.c"
+#line 1820 "myparser.tab.c"
     break;
 
   case 14: /* assignment: identifier assignment_op expression  */
-#line 404 "myparser.y"
+#line 625 "myparser.y"
                                           {
-        if (emit_tac) {
-            if (strcmp((yyvsp[-1].expr).code, ":=") == 0) {
-                emit((yyvsp[-2].sval), (yyvsp[0].expr).code, NULL, NULL);
-            } else {
-                char* baseOp = getBaseOperator((yyvsp[-1].expr).code);
-                char* temp = newTemp();
-                emit(temp, (yyvsp[-2].sval), baseOp, (yyvsp[0].expr).code);
-                emit((yyvsp[-2].sval), temp, NULL, NULL);
-            }
-            (yyval.expr).code = strdup((yyvsp[-2].sval)); track_allocation((yyval.expr).code);
+        if (strcmp((yyvsp[-1].sval), ":=") == 0) {
+            emit((yyvsp[-2].sval), (yyvsp[0].sval), NULL, NULL);
         } else {
-            // Simulation mode
-            int idx = get_var_index((yyvsp[-2].sval));
-            if (idx >= 0) {
-                process_assignment((yyvsp[-2].sval), (yyvsp[-1].expr).code, (yyvsp[0].expr).code);
-                printf("Simulation: %s %s %s = %d\n", (yyvsp[-2].sval), (yyvsp[-1].expr).code, (yyvsp[0].expr).code, var_values[idx]);
-            }
-            (yyval.expr).code = strdup((yyvsp[-2].sval)); track_allocation((yyval.expr).code);
+            char* baseOp = getBaseOperator((yyvsp[-1].sval));
+            char* temp = newTemp();
+            emit(temp, (yyvsp[-2].sval), baseOp, (yyvsp[0].sval));
+            emit((yyvsp[-2].sval), temp, NULL, NULL);
         }
+        (yyval.sval) = strdup((yyvsp[-2].sval)); track_allocation((yyval.sval));
     }
-#line 1625 "myparser.tab.c"
+#line 1836 "myparser.tab.c"
     break;
 
   case 15: /* assignment_op: ASSIGN  */
-#line 428 "myparser.y"
-              { (yyval.expr).code = strdup(":="); track_allocation((yyval.expr).code); }
-#line 1631 "myparser.tab.c"
+#line 639 "myparser.y"
+              { (yyval.sval) = strdup(":="); track_allocation((yyval.sval)); }
+#line 1842 "myparser.tab.c"
     break;
 
   case 16: /* assignment_op: PLUSEQ  */
-#line 429 "myparser.y"
-              { (yyval.expr).code = strdup("+="); track_allocation((yyval.expr).code); }
-#line 1637 "myparser.tab.c"
+#line 640 "myparser.y"
+              { (yyval.sval) = strdup("+="); track_allocation((yyval.sval)); }
+#line 1848 "myparser.tab.c"
     break;
 
   case 17: /* assignment_op: MINUSEQ  */
-#line 430 "myparser.y"
-              { (yyval.expr).code = strdup("-="); track_allocation((yyval.expr).code); }
-#line 1643 "myparser.tab.c"
+#line 641 "myparser.y"
+              { (yyval.sval) = strdup("-="); track_allocation((yyval.sval)); }
+#line 1854 "myparser.tab.c"
     break;
 
   case 18: /* assignment_op: MULEQ  */
-#line 431 "myparser.y"
-              { (yyval.expr).code = strdup("*="); track_allocation((yyval.expr).code); }
-#line 1649 "myparser.tab.c"
+#line 642 "myparser.y"
+              { (yyval.sval) = strdup("*="); track_allocation((yyval.sval)); }
+#line 1860 "myparser.tab.c"
     break;
 
   case 19: /* assignment_op: DIVEQ  */
-#line 432 "myparser.y"
-              { (yyval.expr).code = strdup("/="); track_allocation((yyval.expr).code); }
-#line 1655 "myparser.tab.c"
+#line 643 "myparser.y"
+              { (yyval.sval) = strdup("/="); track_allocation((yyval.sval)); }
+#line 1866 "myparser.tab.c"
     break;
 
   case 20: /* assignment_op: MODEQ  */
-#line 433 "myparser.y"
-              { (yyval.expr).code = strdup("%="); track_allocation((yyval.expr).code); }
-#line 1661 "myparser.tab.c"
+#line 644 "myparser.y"
+              { (yyval.sval) = strdup("%="); track_allocation((yyval.sval)); }
+#line 1872 "myparser.tab.c"
     break;
 
   case 21: /* $@1: %empty  */
-#line 437 "myparser.y"
-                               {
-        if (emit_tac) {
-            char* start = newLabel();
-            char* end = newLabel();
-            current_loop_start = start;
-            current_loop_end = end;
+#line 651 "myparser.y"
+      {
+        /* 1) at “do”, generate labels & test */
+        char* start = newLabel();  track_allocation(start);
+        char* end   = newLabel();  track_allocation(end);
+        current_loop_start = start;
+        current_loop_end   = end;
 
-            emitLabel(start);
-            emitCondJump((yyvsp[-2].expr).code, end);
-        } else {
-            // Simulation mode - keep the condition's result
-        }
-    }
-#line 1679 "myparser.tab.c"
-    break;
-
-  case 22: /* while_loop: WHILE OB bool_expr CB DO $@1 block  */
-#line 449 "myparser.y"
-            {
-        if (emit_tac) {
-            emitGoto(current_loop_start);
-            emitLabel(current_loop_end);
-        } else {
-            // Simulation: block already handled conditionally
-        }
-    }
-#line 1692 "myparser.tab.c"
-    break;
-
-  case 23: /* $@2: %empty  */
-#line 460 "myparser.y"
-                                                                         {
-        if (emit_tac) {
-            // Original TAC generation for FOR loop
-            emit((yyvsp[-7].sval), (yyvsp[-5].expr).code, NULL, NULL);
-            
-            printf("\n");
-            char* start_label = newLabel();
-            char* end_label = newLabel();
-            current_for_start = start_label;
-            current_for_end = end_label;
-            emitLabel(start_label);
-            
-            printf("\n");
-            char* bound = newTemp();
-            emit(bound, (yyvsp[-3].expr).code, NULL, NULL);
-            
-            char* step = newTemp();
-            emit(step, (yyvsp[-1].expr).code, NULL, NULL);
-            
-            printf("\n");
-            char* cond = newCondTemp();
-            if (strcmp((yyvsp[-2].expr).code, "inc") == 0)
-                emit(cond, (yyvsp[-7].sval), ">", bound);
-            else
-                emit(cond, bound, ">", (yyvsp[-7].sval));
-            emitCondJumpTrue(cond, end_label);
-            
-            printf("\n");
-        } else {
-            // Simulation mode
-            char* loop_var = (yyvsp[-7].sval);
-            int loop_idx = get_var_index(loop_var);
-            int initial_val = (yyvsp[-5].expr).value;
-            int target_val = (yyvsp[-3].expr).value;
-            int step_val = (yyvsp[-1].expr).value;
-            int is_inc = strcmp((yyvsp[-2].expr).code, "inc") == 0;
-            
-            // First, initialize the loop variable before executing the block
-            var_values[loop_idx] = initial_val;
-            var_initialized[loop_idx] = 1;  // Mark as initialized
-            
-            // Check if loop condition is satisfied
-            int should_execute = (is_inc && initial_val <= target_val) || 
-                                (!is_inc && initial_val >= target_val);
-            
-            if (!should_execute) {
-                printf("FOR loop condition not satisfied, skipping loop body\n");
-            } else {
-                printf("FOR loop executed (one iteration during parsing)\n");
-                // The block is executed during parsing, 
-                // but we can only execute one iteration during direct interpretation
-                
-                // After block execution, update the loop counter
-                if (is_inc) {
-                    var_values[loop_idx] += step_val;
-                } else {
-                    var_values[loop_idx] -= step_val;
-                }
-            }
-        }
-    }
-#line 1758 "myparser.tab.c"
-    break;
-
-  case 24: /* for_stmt: FOR identifier ASSIGN expression TO expression for_dir for_step DO $@2 block  */
-#line 520 "myparser.y"
-            {
-        if (emit_tac) {
-            char* loop_var = (yyvsp[-9].sval);
-            char* step = (yyvsp[-3].expr).code;
-            char* step_temp = newTemp();
-            if (strcmp((yyvsp[-4].expr).code, "inc") == 0)
-                emit(step_temp, loop_var, "+", step);
-            else
-                emit(step_temp, loop_var, "-", step);
-            emit(loop_var, step_temp, NULL, NULL);
-            emitGoto(current_for_start);
-            emitLabel(current_for_end);
-        } else {
-            // After block execution in simulation mode
-        }
-    }
-#line 1779 "myparser.tab.c"
-    break;
-
-  case 25: /* if_cond: IF OB bool_expr CB block ELSE block  */
-#line 540 "myparser.y"
-                                          {
-        __if_false = newLabel();
-        __if_end = newLabel();
-        emitCondJump((yyvsp[-4].expr).code, __if_false);
-        
-        // The true block has already been parsed, so emit the jump to skip else
-        emitGoto(__if_end);
-        emitLabel(__if_false);
-        
-        // After the else block
-        emitLabel(__if_end);
-    }
-#line 1796 "myparser.tab.c"
-    break;
-
-  case 26: /* if_cond: IF OB bool_expr CB DO block ELSE block  */
-#line 552 "myparser.y"
-                                             {
-        // Keep this for backward compatibility
-        __if_false = newLabel();
-        __if_end = newLabel();
-        emitCondJump((yyvsp[-5].expr).code, __if_false);
-        
-        emitGoto(__if_end);
-        emitLabel(__if_false);
-        
-        emitLabel(__if_end);
-    }
-#line 1812 "myparser.tab.c"
-    break;
-
-  case 27: /* expression: term  */
-#line 566 "myparser.y"
-           {
-        (yyval.expr).code = (yyvsp[0].expr).code;
-        (yyval.expr).value = (yyvsp[0].expr).value;
-    }
-#line 1821 "myparser.tab.c"
-    break;
-
-  case 28: /* expression: expression ADD term  */
-#line 570 "myparser.y"
-                          {
-        if (emit_tac) {
-            char* temp = newTemp();
-            emit(temp, (yyvsp[-2].expr).code, "+", (yyvsp[0].expr).code); 
-            (yyval.expr).code = temp;
-        } else {
-            // Simulation mode
-            (yyval.expr).value = (yyvsp[-2].expr).value + (yyvsp[0].expr).value;
-            char temp[20];
-            sprintf(temp, "%d", (yyval.expr).value);
-            (yyval.expr).code = strdup(temp);
-            track_allocation((yyval.expr).code);
-        }
-    }
-#line 1840 "myparser.tab.c"
-    break;
-
-  case 29: /* expression: expression SUB term  */
-#line 584 "myparser.y"
-                          {
-        if (emit_tac) {
-            char* temp = newTemp();
-            emit(temp, (yyvsp[-2].expr).code, "-", (yyvsp[0].expr).code); 
-            (yyval.expr).code = temp;
-        } else {
-            // Simulation mode
-            (yyval.expr).value = (yyvsp[-2].expr).value - (yyvsp[0].expr).value;
-            char temp[20];
-            sprintf(temp, "%d", (yyval.expr).value);
-            (yyval.expr).code = strdup(temp);
-            track_allocation((yyval.expr).code);
-        }
-    }
-#line 1859 "myparser.tab.c"
-    break;
-
-  case 30: /* term: factor  */
-#line 601 "myparser.y"
-             {
-        (yyval.expr).code = (yyvsp[0].expr).code;
-        (yyval.expr).value = (yyvsp[0].expr).value;
-    }
-#line 1868 "myparser.tab.c"
-    break;
-
-  case 31: /* term: term MUL factor  */
-#line 605 "myparser.y"
-                      {
-        if (emit_tac) {
-            char* temp = newTemp();
-            emit(temp, (yyvsp[-2].expr).code, "*", (yyvsp[0].expr).code); 
-            (yyval.expr).code = temp;
-        } else {
-            // Simulation mode
-            (yyval.expr).value = (yyvsp[-2].expr).value * (yyvsp[0].expr).value;
-            char temp[20];
-            sprintf(temp, "%d", (yyval.expr).value);
-            (yyval.expr).code = strdup(temp);
-            track_allocation((yyval.expr).code);
-        }
-    }
+        emitLabel(start);            /* L1: */
+        emitCondJump((yyvsp[-2].sval), end);       /* if t_cond1 == 0 goto L2 */
+      }
 #line 1887 "myparser.tab.c"
     break;
 
-  case 32: /* term: term DIV factor  */
-#line 619 "myparser.y"
-                      {
-        if (emit_tac) {
-            char* temp = newTemp();
-            emit(temp, (yyvsp[-2].expr).code, "/", (yyvsp[0].expr).code); 
-            (yyval.expr).code = temp;
-        } else {
-            // Simulation mode
-            if ((yyvsp[0].expr).value == 0) {
-                fprintf(stderr, "Runtime error at line %d: Division by zero.\n", yylineno);
-                exit(1);
-            }
-            (yyval.expr).value = (yyvsp[-2].expr).value / (yyvsp[0].expr).value;
-            char temp[20];
-            sprintf(temp, "%d", (yyval.expr).value);
-            (yyval.expr).code = strdup(temp);
-            track_allocation((yyval.expr).code);
-        }
-    }
-#line 1910 "myparser.tab.c"
-    break;
-
-  case 33: /* term: term MOD factor  */
-#line 637 "myparser.y"
-                      {
-        if (emit_tac) {
-            char* temp = newTemp();
-            emit(temp, (yyvsp[-2].expr).code, "%", (yyvsp[0].expr).code); 
-            (yyval.expr).code = temp;
-        } else {
-            // Simulation mode
-            if ((yyvsp[0].expr).value == 0) {
-                fprintf(stderr, "Runtime error at line %d: Modulo by zero.\n", yylineno);
-                exit(1);
-            }
-            (yyval.expr).value = (yyvsp[-2].expr).value % (yyvsp[0].expr).value;
-            char temp[20];
-            sprintf(temp, "%d", (yyval.expr).value);
-            (yyval.expr).code = strdup(temp);
-            track_allocation((yyval.expr).code);
-        }
-    }
-#line 1933 "myparser.tab.c"
-    break;
-
-  case 34: /* factor: OB expression CB  */
-#line 658 "myparser.y"
-                       {
-        (yyval.expr).code = (yyvsp[-1].expr).code;
-        (yyval.expr).value = (yyvsp[-1].expr).value;
-    }
-#line 1942 "myparser.tab.c"
-    break;
-
-  case 35: /* factor: OB INTEGER_CONST COMMA INTEGER_CONST CB  */
+  case 22: /* while_loop: WHILE OB bool_expr CB DO $@1 block  */
 #line 662 "myparser.y"
-                                              {
-        // Handle (x, y) format for integer constants
-        if (emit_tac) {
-            (yyval.expr).code = strdup((yyvsp[-3].sval)); // Use the first value for TAC
-            track_allocation((yyval.expr).code);
-        } else {
-            // Simulation mode - use the second value
-            (yyval.expr).value = atoi((yyvsp[-3].sval)); // We'll use the first value for simulation too
-            char temp[20];
-            sprintf(temp, "%d", (yyval.expr).value);
-            (yyval.expr).code = strdup(temp);
-            track_allocation((yyval.expr).code);
-        }
-    }
-#line 1961 "myparser.tab.c"
+      {
+        /* 2) after the block, loop back & close */
+        emitGoto(current_loop_start);  
+        emitLabel(current_loop_end);  /* L2: */
+      }
+#line 1897 "myparser.tab.c"
     break;
 
-  case 36: /* factor: identifier  */
-#line 676 "myparser.y"
-                 {
-        (yyval.expr).code = strdup((yyvsp[0].sval)); 
-        track_allocation((yyval.expr).code);
-        if (!emit_tac) {
-            if (is_declared((yyvsp[0].sval))) {
-                int idx = get_var_index((yyvsp[0].sval));
-                if (var_initialized[idx]) {
-                    (yyval.expr).value = var_values[idx];
-                } else {
-                    (yyval.expr).value = 0; // Default value for uninitialized
-                    printf("Warning: Using uninitialized variable '%s'\n", (yyvsp[0].sval));
-                }
-            } else {
-                (yyval.expr).value = 0; // Default value
-            }
-        }
-    }
-#line 1983 "myparser.tab.c"
+  case 23: /* $@2: %empty  */
+#line 675 "myparser.y"
+      {
+        /* 1) init loop var */
+        emit((yyvsp[-7].sval), (yyvsp[-5].sval), NULL, NULL);             /* a := (10, 8) */
+
+        /* 2) blank and loop‐start label */
+        printf("\n");
+        char* start = newLabel();  track_allocation(start);
+        char* end   = newLabel();  track_allocation(end);
+        current_for_start = start;
+        current_for_end   = end;
+        emitLabel(start);  
+        printf("\n");
+
+        /* 3) compute bound (t3) and step (t4) */
+        char* bound = newTemp();
+        emit(bound, (yyvsp[-3].sval), NULL, NULL);          /* t3 := b + (10, 2) */
+
+        current_for_step_temp = newTemp();
+        emit(current_for_step_temp, (yyvsp[-1].sval), NULL, NULL);  
+                                              /* t4 := (1, 10) */
+        printf("\n");
+
+        /* 4) test and conditional jump */
+        char* cond = newCondTemp();
+        emit(cond, (yyvsp[-7].sval), ">", bound);           /* t_cond2 := a > t3 */
+        emitCondJumpTrue(cond, end);          /* if t_cond2 == 1 goto L4 */
+        printf("\n");
+      }
+#line 1930 "myparser.tab.c"
     break;
 
-  case 37: /* factor: INTEGER_CONST  */
-#line 693 "myparser.y"
-                    {
-        (yyval.expr).code = strdup((yyvsp[0].sval)); 
-        track_allocation((yyval.expr).code);
-        (yyval.expr).value = atoi((yyvsp[0].sval));
-    }
-#line 1993 "myparser.tab.c"
+  case 24: /* for_stmt: FOR identifier ASSIGN expression TO expression for_dir for_step DO $@2 block  */
+#line 704 "myparser.y"
+      {
+        /* 5) body already emitted by `block` */
+
+        /* 6) increment by saved step temp */
+        char* tmp = newTemp();
+        emit(tmp, (yyvsp[-9].sval), "+", current_for_step_temp);  
+        emit((yyvsp[-9].sval), tmp, NULL, NULL);             /* a := tmp */
+        printf("\n");
+
+        /* 7) back‐edge and end label */
+        emitGoto(current_for_start);
+        emitLabel(current_for_end);            /* L4: */
+        printf("\n");
+      }
+#line 1949 "myparser.tab.c"
     break;
 
-  case 38: /* factor: CHAR_LITERAL  */
-#line 698 "myparser.y"
-                   {
-        (yyval.expr).code = (yyvsp[0].sval); 
-        if ((yyvsp[0].sval)[0] == '\'') {
-            (yyval.expr).value = (yyvsp[0].sval)[1];  // 'a' -> value of 'a'
-        } else {
-            (yyval.expr).value = atoi((yyvsp[0].sval));
-        }
-    }
-#line 2006 "myparser.tab.c"
+  case 25: /* $@3: %empty  */
+#line 726 "myparser.y"
+      { 
+        /* 1) at “)”, make labels and emit the conditional jump */
+        __if_false = newLabel();    track_allocation(__if_false);
+        __if_end   = newLabel();    track_allocation(__if_end);
+        emitCondJump((yyvsp[-1].sval), __if_false);  
+      }
+#line 1960 "myparser.tab.c"
     break;
 
-  case 39: /* identifier: IDENTIFIER  */
-#line 709 "myparser.y"
-                 {
-        if (!is_declared((yyvsp[0].sval))) {
-            fprintf(stderr, "Semantic error at line %d: Variable '%s' used before declaration.\n", yylineno, (yyvsp[0].sval));
-            exit(1);
-        }
-        (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval));
+  case 26: /* $@4: %empty  */
+#line 733 "myparser.y"
+      {
+        /* 2) right after THEN block */
+        emitGoto(__if_end);
+        emitLabel(__if_false);  
+      }
+#line 1970 "myparser.tab.c"
+    break;
+
+  case 27: /* if_cond: IF OB bool_expr CB $@3 block $@4 ELSE block  */
+#line 740 "myparser.y"
+      {
+        /* 3) after ELSE block */
+        emitLabel(__if_end);
+      }
+#line 1979 "myparser.tab.c"
+    break;
+
+  case 28: /* expression: term  */
+#line 750 "myparser.y"
+                             { (yyval.sval) = (yyvsp[0].sval); }
+#line 1985 "myparser.tab.c"
+    break;
+
+  case 29: /* expression: expression ADD term  */
+#line 751 "myparser.y"
+                             {
+        char* temp = newTemp();
+        emit(temp, (yyvsp[-2].sval), "+", (yyvsp[0].sval)); (yyval.sval) = temp;
+    }
+#line 1994 "myparser.tab.c"
+    break;
+
+  case 30: /* expression: expression SUB term  */
+#line 755 "myparser.y"
+                             {
+        char* temp = newTemp();
+        emit(temp, (yyvsp[-2].sval), "-", (yyvsp[0].sval)); (yyval.sval) = temp;
+    }
+#line 2003 "myparser.tab.c"
+    break;
+
+  case 31: /* term: factor  */
+#line 762 "myparser.y"
+                            { (yyval.sval) = (yyvsp[0].sval); }
+#line 2009 "myparser.tab.c"
+    break;
+
+  case 32: /* term: term MUL factor  */
+#line 763 "myparser.y"
+                            {
+        char* temp = newTemp();
+        emit(temp, (yyvsp[-2].sval), "*", (yyvsp[0].sval)); (yyval.sval) = temp;
     }
 #line 2018 "myparser.tab.c"
     break;
 
-  case 40: /* identifier: IDENTIFIER LBRACKET expression RBRACKET  */
-#line 716 "myparser.y"
-                                              {
-        // Create array access identifier like "arr[3]"
-        char* array_name = malloc(strlen((yyvsp[-3].sval)) + strlen((yyvsp[-1].expr).code) + 3);
-        sprintf(array_name, "%s[%s]", (yyvsp[-3].sval), (yyvsp[-1].expr).code);
-        
-        // Check if the base array is declared
-        char* base_array = strdup((yyvsp[-3].sval));
-        if (!is_declared(base_array)) {
-            fprintf(stderr, "Semantic error at line %d: Array '%s' used before declaration.\n", yylineno, (yyvsp[-3].sval));
-            free(base_array);
+  case 33: /* term: term DIV factor  */
+#line 767 "myparser.y"
+                            {
+        char* temp = newTemp();
+        emit(temp, (yyvsp[-2].sval), "/", (yyvsp[0].sval)); (yyval.sval) = temp;
+    }
+#line 2027 "myparser.tab.c"
+    break;
+
+  case 34: /* term: term MOD factor  */
+#line 771 "myparser.y"
+                            {
+        char* temp = newTemp();
+        emit(temp, (yyvsp[-2].sval), "%", (yyvsp[0].sval)); (yyval.sval) = temp;
+    }
+#line 2036 "myparser.tab.c"
+    break;
+
+  case 35: /* factor: OB expression CB  */
+#line 778 "myparser.y"
+                             { (yyval.sval) = (yyvsp[-1].sval); }
+#line 2042 "myparser.tab.c"
+    break;
+
+  case 36: /* factor: identifier  */
+#line 779 "myparser.y"
+                             { (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval)); }
+#line 2048 "myparser.tab.c"
+    break;
+
+  case 37: /* factor: INTEGER_CONST  */
+#line 780 "myparser.y"
+                             { (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval)); }
+#line 2054 "myparser.tab.c"
+    break;
+
+  case 38: /* factor: CHAR_LITERAL  */
+#line 781 "myparser.y"
+                             { (yyval.sval) = (yyvsp[0].sval); }
+#line 2060 "myparser.tab.c"
+    break;
+
+  case 39: /* identifier: IDENTIFIER  */
+#line 785 "myparser.y"
+                 {
+        if (!is_declared((yyvsp[0].sval))) {
+            fprintf(stderr, "Semantic error: variable '%s' used before declaration.\n", (yyvsp[0].sval));
             exit(1);
         }
-        free(base_array);
-        
-        (yyval.sval) = array_name;
-        track_allocation((yyval.sval));
+        (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval));
     }
-#line 2040 "myparser.tab.c"
+#line 2072 "myparser.tab.c"
     break;
 
-  case 41: /* bool_expr: condition  */
-#line 736 "myparser.y"
-                {
-        (yyval.expr).code = (yyvsp[0].expr).code;
-        (yyval.expr).value = (yyvsp[0].expr).value;
-    }
-#line 2049 "myparser.tab.c"
+  case 40: /* bool_expr: condition  */
+#line 795 "myparser.y"
+                { (yyval.sval) = (yyvsp[0].sval); }
+#line 2078 "myparser.tab.c"
     break;
 
-  case 42: /* bool_expr: bool_expr AND bool_expr  */
-#line 740 "myparser.y"
+  case 41: /* bool_expr: bool_expr AND bool_expr  */
+#line 796 "myparser.y"
                               {
-        if (emit_tac) {
-            char* temp = newTemp();
-            emit(temp, (yyvsp[-2].expr).code, "and", (yyvsp[0].expr).code); 
-            (yyval.expr).code = temp;
-        } else {
-            // Simulation mode
-            (yyval.expr).value = (yyvsp[-2].expr).value && (yyvsp[0].expr).value;
-            char temp[20];
-            sprintf(temp, "%d", (yyval.expr).value);
-            (yyval.expr).code = strdup(temp);
-            track_allocation((yyval.expr).code);
-        }
-    }
-#line 2068 "myparser.tab.c"
-    break;
-
-  case 43: /* bool_expr: bool_expr OR bool_expr  */
-#line 754 "myparser.y"
-                             {
-        if (emit_tac) {
-            char* temp = newTemp();
-            emit(temp, (yyvsp[-2].expr).code, "or", (yyvsp[0].expr).code); 
-            (yyval.expr).code = temp;
-        } else {
-            // Simulation mode
-            (yyval.expr).value = (yyvsp[-2].expr).value || (yyvsp[0].expr).value;
-            char temp[20];
-            sprintf(temp, "%d", (yyval.expr).value);
-            (yyval.expr).code = strdup(temp);
-            track_allocation((yyval.expr).code);
-        }
+        char* temp = newTemp();
+        emit(temp, (yyvsp[-2].sval), "and", (yyvsp[0].sval)); (yyval.sval) = temp;
     }
 #line 2087 "myparser.tab.c"
     break;
 
-  case 44: /* bool_expr: NOT bool_expr  */
-#line 768 "myparser.y"
+  case 42: /* bool_expr: bool_expr OR bool_expr  */
+#line 800 "myparser.y"
+                             {
+        char* temp = newTemp();
+        emit(temp, (yyvsp[-2].sval), "or", (yyvsp[0].sval)); (yyval.sval) = temp;
+    }
+#line 2096 "myparser.tab.c"
+    break;
+
+  case 43: /* bool_expr: NOT bool_expr  */
+#line 804 "myparser.y"
                     {
-        if (emit_tac) {
-            char* temp = newTemp();
-            emit(temp, "not", (yyvsp[0].expr).code, NULL); 
-            (yyval.expr).code = temp;
-        } else {
-            // Simulation mode
-            (yyval.expr).value = !(yyvsp[0].expr).value;
-            char temp[20];
-            sprintf(temp, "%d", (yyval.expr).value);
-            (yyval.expr).code = strdup(temp);
-            track_allocation((yyval.expr).code);
-        }
+        char* temp = newTemp();
+        emit(temp, "not", (yyvsp[0].sval), NULL); (yyval.sval) = temp;
     }
-#line 2106 "myparser.tab.c"
+#line 2105 "myparser.tab.c"
     break;
 
-  case 45: /* condition: expression relop expression  */
-#line 785 "myparser.y"
-                                  {
-        if (emit_tac) {
-            char* temp = newCondTemp();
-            emit(temp, (yyvsp[-2].expr).code, (yyvsp[-1].expr).code, (yyvsp[0].expr).code); 
-            (yyval.expr).code = temp;
-        } else {
-            // Simulation mode
-            if (strcmp((yyvsp[-1].expr).code, "=") == 0)
-                (yyval.expr).value = ((yyvsp[-2].expr).value == (yyvsp[0].expr).value);
-            else if (strcmp((yyvsp[-1].expr).code, "!=") == 0)
-                (yyval.expr).value = ((yyvsp[-2].expr).value != (yyvsp[0].expr).value);
-            else if (strcmp((yyvsp[-1].expr).code, ">") == 0)
-                (yyval.expr).value = ((yyvsp[-2].expr).value > (yyvsp[0].expr).value);
-            else if (strcmp((yyvsp[-1].expr).code, ">=") == 0)
-                (yyval.expr).value = ((yyvsp[-2].expr).value >= (yyvsp[0].expr).value);
-            else if (strcmp((yyvsp[-1].expr).code, "<") == 0)
-                (yyval.expr).value = ((yyvsp[-2].expr).value < (yyvsp[0].expr).value);
-            else if (strcmp((yyvsp[-1].expr).code, "<=") == 0)
-                (yyval.expr).value = ((yyvsp[-2].expr).value <= (yyvsp[0].expr).value);
-                
-            char temp[20];
-            sprintf(temp, "%d", (yyval.expr).value);
-            (yyval.expr).code = strdup(temp);
-            track_allocation((yyval.expr).code);
-        }
-    }
-#line 2137 "myparser.tab.c"
+  case 44: /* condition: expression relop expression  */
+#line 811 "myparser.y"
+                                {
+      char* tmp = newCondTemp();      
+      emit(tmp, (yyvsp[-2].sval), (yyvsp[-1].sval), (yyvsp[0].sval));          /* t_cond1 := lhs relop rhs */
+      (yyval.sval) = tmp;
+  }
+#line 2115 "myparser.tab.c"
     break;
 
-  case 46: /* relop: EQ  */
-#line 814 "myparser.y"
-         { (yyval.expr).code = strdup("="); track_allocation((yyval.expr).code); }
-#line 2143 "myparser.tab.c"
+  case 45: /* relop: EQ  */
+#line 823 "myparser.y"
+         { (yyval.sval) = strdup("="); track_allocation((yyval.sval)); }
+#line 2121 "myparser.tab.c"
     break;
 
-  case 47: /* relop: NE  */
-#line 815 "myparser.y"
-         { (yyval.expr).code = strdup("!="); track_allocation((yyval.expr).code); }
-#line 2149 "myparser.tab.c"
+  case 46: /* relop: NE  */
+#line 824 "myparser.y"
+         { (yyval.sval) = strdup("!="); track_allocation((yyval.sval)); }
+#line 2127 "myparser.tab.c"
     break;
 
-  case 48: /* relop: GT  */
-#line 816 "myparser.y"
-         { (yyval.expr).code = strdup(">"); track_allocation((yyval.expr).code); }
-#line 2155 "myparser.tab.c"
+  case 47: /* relop: GT  */
+#line 825 "myparser.y"
+         { (yyval.sval) = strdup(">"); track_allocation((yyval.sval)); }
+#line 2133 "myparser.tab.c"
     break;
 
-  case 49: /* relop: GE  */
-#line 817 "myparser.y"
-         { (yyval.expr).code = strdup(">="); track_allocation((yyval.expr).code); }
-#line 2161 "myparser.tab.c"
+  case 48: /* relop: GE  */
+#line 826 "myparser.y"
+         { (yyval.sval) = strdup(">="); track_allocation((yyval.sval)); }
+#line 2139 "myparser.tab.c"
     break;
 
-  case 50: /* relop: LT  */
-#line 818 "myparser.y"
-         { (yyval.expr).code = strdup("<"); track_allocation((yyval.expr).code); }
-#line 2167 "myparser.tab.c"
-    break;
-
-  case 51: /* relop: LE  */
-#line 819 "myparser.y"
-         { (yyval.expr).code = strdup("<="); track_allocation((yyval.expr).code); }
-#line 2173 "myparser.tab.c"
-    break;
-
-  case 53: /* for_dir: INC  */
+  case 49: /* relop: LT  */
 #line 827 "myparser.y"
-          { 
-        (yyval.expr).code = strdup("inc"); track_allocation((yyval.expr).code);
-        (yyval.expr).value = 1;  // For simulation
-    }
-#line 2182 "myparser.tab.c"
+         { (yyval.sval) = strdup("<"); track_allocation((yyval.sval)); }
+#line 2145 "myparser.tab.c"
     break;
 
-  case 54: /* for_dir: DEC  */
-#line 831 "myparser.y"
-          { 
-        (yyval.expr).code = strdup("dec"); track_allocation((yyval.expr).code);
-        (yyval.expr).value = 0;  // For simulation
-    }
-#line 2191 "myparser.tab.c"
+  case 50: /* relop: LE  */
+#line 828 "myparser.y"
+         { (yyval.sval) = strdup("<="); track_allocation((yyval.sval)); }
+#line 2151 "myparser.tab.c"
     break;
 
-  case 55: /* for_step: expression  */
+  case 52: /* for_dir: INC  */
+#line 837 "myparser.y"
+          { (yyval.sval) = strdup("inc"); track_allocation((yyval.sval)); }
+#line 2157 "myparser.tab.c"
+    break;
+
+  case 53: /* for_dir: DEC  */
 #line 838 "myparser.y"
-                 { (yyval.expr) = (yyvsp[0].expr); }
-#line 2197 "myparser.tab.c"
+          { (yyval.sval) = strdup("dec"); track_allocation((yyval.sval)); }
+#line 2163 "myparser.tab.c"
     break;
 
-  case 56: /* print: PRINT OB STRING_LITERAL formatArgs CB SEMICOLON  */
+  case 54: /* for_step: expression  */
 #line 842 "myparser.y"
+                 { (yyval.sval) = (yyvsp[0].sval); }
+#line 2169 "myparser.tab.c"
+    break;
+
+  case 55: /* print: PRINT OB STRING_LITERAL formatArgs CB SEMICOLON  */
+#line 851 "myparser.y"
                                                       {
-        if (emit_tac) {
-            if ((yyvsp[-2].sval)) {
-                printf("print \"%s\", %s\n", (yyvsp[-3].sval), (yyvsp[-2].sval));
-            } else {
-                printf("print \"%s\"\n", (yyvsp[-3].sval));
-            }
+        if ((yyvsp[-2].sval)) {
+            printf("print \"%s\", %s\n", (yyvsp[-3].sval), (yyvsp[-2].sval));
+            emitPrint((yyvsp[-3].sval), (yyvsp[-2].sval));
         } else {
-            // Simulation mode - actually print the output
-            simulate_print((yyvsp[-3].sval), (yyvsp[-2].sval));
+            printf("print \"%s\"\n", (yyvsp[-3].sval));
+            emitPrint((yyvsp[-3].sval), NULL);
         }
     }
-#line 2214 "myparser.tab.c"
+#line 2183 "myparser.tab.c"
     break;
 
-  case 57: /* scan: SCAN OB STRING_LITERAL COMMA argList CB SEMICOLON  */
-#line 857 "myparser.y"
+  case 56: /* scan: SCAN OB STRING_LITERAL COMMA argList CB SEMICOLON  */
+#line 863 "myparser.y"
                                                         {
-        if (emit_tac) {
-            printf("scan \"%s\"\n", (yyvsp[-4].sval));
-            if ((yyvsp[-2].sval)) printf("vars: %s\n", (yyvsp[-2].sval)); // variables list
-        } else {
-            // Simulation mode - actually read input values
-            simulate_scan((yyvsp[-4].sval), (yyvsp[-2].sval));
-        }
+        printf("scan \"%s\"\n", (yyvsp[-4].sval));
+        if ((yyvsp[-2].sval)) printf("vars: %s\n", (yyvsp[-2].sval)); // variables list
+        emitScan((yyvsp[-4].sval), (yyvsp[-2].sval));
     }
-#line 2228 "myparser.tab.c"
+#line 2193 "myparser.tab.c"
     break;
 
-  case 58: /* formatArgs: %empty  */
-#line 869 "myparser.y"
+  case 57: /* formatArgs: %empty  */
+#line 871 "myparser.y"
                   { (yyval.sval) = NULL; }
-#line 2234 "myparser.tab.c"
+#line 2199 "myparser.tab.c"
     break;
 
-  case 59: /* formatArgs: COMMA argList  */
-#line 870 "myparser.y"
+  case 58: /* formatArgs: COMMA argList  */
+#line 872 "myparser.y"
                     { (yyval.sval) = (yyvsp[0].sval); }
-#line 2240 "myparser.tab.c"
+#line 2205 "myparser.tab.c"
     break;
 
-  case 60: /* argList: value  */
-#line 874 "myparser.y"
+  case 59: /* argList: value  */
+#line 876 "myparser.y"
             {
-        if (emit_tac) {
-            (yyval.sval) = strdup((yyvsp[0].expr).code); track_allocation((yyval.sval));
-        } else {
-            char temp[20];
-            sprintf(temp, "%d", (yyvsp[0].expr).value);  // Convert value to string
-            (yyval.sval) = strdup(temp);
-            track_allocation((yyval.sval));
-        }
+        (yyval.sval) = strdup((yyvsp[0].sval)); track_allocation((yyval.sval));
     }
-#line 2255 "myparser.tab.c"
+#line 2213 "myparser.tab.c"
     break;
 
-  case 61: /* argList: value COMMA argList  */
-#line 884 "myparser.y"
+  case 60: /* argList: value COMMA argList  */
+#line 879 "myparser.y"
                           {
-        if (emit_tac) {
-            char* temp = malloc(strlen((yyvsp[-2].expr).code) + strlen((yyvsp[0].sval)) + 2);
-            sprintf(temp, "%s,%s", (yyvsp[-2].expr).code, (yyvsp[0].sval));
-            track_allocation(temp);
-            (yyval.sval) = temp;
-        } else {
-            char val_str[20];
-            sprintf(val_str, "%d", (yyvsp[-2].expr).value);
-            
-            char* temp = malloc(strlen(val_str) + strlen((yyvsp[0].sval)) + 2);
-            sprintf(temp, "%s,%s", val_str, (yyvsp[0].sval));
-            track_allocation(temp);
-            (yyval.sval) = temp;
-        }
+        char* temp = malloc(strlen((yyvsp[-2].sval)) + strlen((yyvsp[0].sval)) + 2);
+        sprintf(temp, "%s,%s", (yyvsp[-2].sval), (yyvsp[0].sval));
+        track_allocation(temp);
+        (yyval.sval) = temp;
     }
-#line 2276 "myparser.tab.c"
+#line 2224 "myparser.tab.c"
     break;
 
-  case 62: /* value: identifier  */
-#line 903 "myparser.y"
-                 { 
-        (yyval.expr).code = (yyvsp[0].sval); 
-        if (!emit_tac) {
-            (yyval.expr).value = get_variable_value((yyvsp[0].sval));
-        }
-    }
-#line 2287 "myparser.tab.c"
+  case 61: /* value: identifier  */
+#line 888 "myparser.y"
+                 { (yyval.sval) = (yyvsp[0].sval); }
+#line 2230 "myparser.tab.c"
     break;
 
-  case 63: /* value: INTEGER_CONST  */
-#line 909 "myparser.y"
-                    { 
-        (yyval.expr).code = (yyvsp[0].sval); 
-        (yyval.expr).value = atoi((yyvsp[0].sval));
-    }
-#line 2296 "myparser.tab.c"
+  case 62: /* value: INTEGER_CONST  */
+#line 889 "myparser.y"
+                    { (yyval.sval) = (yyvsp[0].sval); }
+#line 2236 "myparser.tab.c"
     break;
 
-  case 64: /* value: CHAR_LITERAL  */
-#line 913 "myparser.y"
-                    { 
-        (yyval.expr).code = (yyvsp[0].sval); 
-        if ((yyvsp[0].sval)[0] == '\'') {
-            (yyval.expr).value = (yyvsp[0].sval)[1];  // 'a' -> value of 'a'
-        } else {
-            (yyval.expr).value = atoi((yyvsp[0].sval));
-        }
-    }
-#line 2309 "myparser.tab.c"
+  case 63: /* value: CHAR_LITERAL  */
+#line 890 "myparser.y"
+                    { (yyval.sval) = (yyvsp[0].sval); }
+#line 2242 "myparser.tab.c"
     break;
 
-  case 68: /* VarDeclaration: OB IDENTIFIER arrayDec COMMA type CB SEMICOLON  */
-#line 935 "myparser.y"
+  case 67: /* VarDeclaration: OB IDENTIFIER arrayDec COMMA type CB SEMICOLON  */
+#line 905 "myparser.y"
                                                      {
-        // Create variable name with array suffix if needed
-        char* varname;
-        if ((yyvsp[-4].array_decl) != NULL) {
-            // If it's an array, append the array declaration to the name for tracking
-            int len = strlen((yyvsp[-5].sval)) + strlen((yyvsp[-4].array_decl)) + 1;
-            varname = malloc(len);
-            sprintf(varname, "%s%s", (yyvsp[-5].sval), (yyvsp[-4].array_decl));
-            track_allocation(varname);
-        } else {
-            varname = strdup((yyvsp[-5].sval));
-            track_allocation(varname);
-        }
-        declare_variable(varname);
+        declare_variable((yyvsp[-5].sval));
     }
-#line 2329 "myparser.tab.c"
-    break;
-
-  case 69: /* arrayDec: %empty  */
-#line 953 "myparser.y"
-                  { (yyval.array_decl) = NULL; }
-#line 2335 "myparser.tab.c"
-    break;
-
-  case 70: /* arrayDec: LBRACKET INTEGER_CONST RBRACKET  */
-#line 954 "myparser.y"
-                                      {
-        // Use INTEGER_CONST instead of DECIMAL for array size
-        char* size = malloc(20);
-        sprintf(size, "[%s]", (yyvsp[-1].sval));
-        track_allocation(size);
-        (yyval.array_decl) = size;
-    }
-#line 2347 "myparser.tab.c"
+#line 2250 "myparser.tab.c"
     break;
 
 
-#line 2351 "myparser.tab.c"
+#line 2254 "myparser.tab.c"
 
       default: break;
     }
@@ -2540,40 +2443,44 @@ yyreturnlab:
   return yyresult;
 }
 
-#line 968 "myparser.y"
+#line 922 "myparser.y"
 
 
-int main(int argc, char** argv) {
-    
-    // Check if a file was specified
-    if (argc > 1) {
-        FILE* file = fopen(argv[1], "r");
-        if (!file) {
-            fprintf(stderr, "Cannot open file '%s': %s\n", argv[1], strerror(errno));
-            return 1;
-        }
-        yyin = file;
-    } else {
-        yyin = stdin; // Read from standard input if no file provided
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <input file>\n", argv[0]);
+        return 1;
     }
-    
-    // Initialize memory
-    allocated_memory = NULL;
-    allocated_count = 0;
-    
-    // Parse the program
+
+    yyin = fopen(argv[1], "r");
+    if (!yyin) {
+        perror("Error opening file");
+        return 1;
+    }
+
     if (yyparse() == 0) {
-        printf("\nParsing completed successfully.\n");
+        printf("Parsing completed successfully.\n");
+        
+        // Initialize temporary variables for simulation
+        for (int i = 0; i < MAX_TEMP_VARS; i++) {
+            temp_vars[i].initialized = 0;
+            temp_vars[i].type = TYPE_UNKNOWN;
+        }
+        
+        // Execute the program
+        execute_program();
+        
+        // Print the symbol table
+        print_symbol_table();
     }
-    
-    // Clean up
+
     cleanup_memory();
-    if (yyin != stdin) fclose(yyin);
-    
+    fclose(yyin);
     return 0;
 }
 
 void yyerror(const char* s) {
-    fprintf(stderr, "Parse error at line %d: %s\n", yylineno, s);
+    fprintf(stderr, "Syntax error at line %d: %s\n", yylineno, s);
+    cleanup_memory();
     exit(1);
 }

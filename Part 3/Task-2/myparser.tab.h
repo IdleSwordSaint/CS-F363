@@ -118,18 +118,13 @@ extern int yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 334 "myparser.y"
+#line 561 "myparser.y"
 
     int ival;
     double dval;
     char* sval;
-    struct {
-        char* code;
-        int value;
-    } expr;
-    char* array_decl;  // Add this for array declarations
 
-#line 133 "myparser.tab.h"
+#line 128 "myparser.tab.h"
 
 };
 typedef union YYSTYPE YYSTYPE;
