@@ -139,6 +139,29 @@ void emitPrint(char* str, char* args) {
     instructions[instruction_count].arg1 = strdup(str);
     instructions[instruction_count].arg2 = args ? strdup(args) : NULL;
     instruction_count++;
+    
+    // Check format specifiers match argument count
+    if (args) {
+        int format_count = 0;
+        int arg_count = 1; // Start with 1 for the first argument
+        
+        // Count format specifiers
+        for (int i = 0; i < strlen(str); i++) {
+            if (str[i] == '%' && i+1 < strlen(str) && str[i+1] == 'd') {
+                format_count++;
+            }
+        }
+        
+        // Count arguments
+        for (int i = 0; i < strlen(args); i++) {
+            if (args[i] == ',') arg_count++;
+        }
+        
+        if (format_count != arg_count) {
+            fprintf(stderr, "Warning at line %d: Format specifier count (%d) doesn't match argument count (%d)\n", 
+                    yylineno, format_count, arg_count);
+        }
+    }
 }
 
 void emitScan(char* str, char* args) {
@@ -334,6 +357,37 @@ int parse_integer_const(const char* str) {
 
 // Get integer value of a variable or literal
 int get_int_value(const char* name) {
+    // Check if it's an array access
+    char* bracket_pos = strchr(name, '[');
+    if (bracket_pos) {
+        char base_name[256];
+        int index;
+        
+        // Extract base name and index
+        int base_len = bracket_pos - name;
+        strncpy(base_name, name, base_len);
+        base_name[base_len] = '\0';
+        
+        // Parse the index
+        sscanf(bracket_pos + 1, "%d", &index);
+        
+        // Check array bounds
+        check_array_bounds(base_name, index);
+        
+        // Get the array element value
+        int array_idx = find_symbol(base_name);
+        if (array_idx >= 0) {
+            if (!symbol_table[array_idx].initialized) {
+                fprintf(stderr, "Semantic error at line %d: Array '%s' used before initialization.\n", 
+                        yylineno, base_name);
+                exit(1);
+            }
+            // For simplicity, we're treating all arrays as int arrays
+            // In a real interpreter, this would depend on the array type
+            return symbol_table[array_idx].value.int_val + index; // Placeholder for array access
+        }
+    }
+
     // Check if it's a literal number directly
     if (isdigit(name[0]) || (name[0] == '-' && isdigit(name[1]))) {
         return atoi(name);
@@ -429,20 +483,43 @@ int perform_op(int left, const char* op, int right) {
     return 0;
 }
 
+// Add this function to check array access bounds
+void check_array_bounds(const char* name, int index) {
+    int symbol_idx = find_symbol(name);
+    if (symbol_idx >= 0 && symbol_table[symbol_idx].is_array) {
+        if (index < 0 || index >= symbol_table[symbol_idx].array_size) {
+            fprintf(stderr, "Runtime error at line %d: Array index %d out of bounds for array '%s' [size %d]\n",
+                    yylineno, index, name, symbol_table[symbol_idx].array_size);
+            exit(1);
+        }
+    } else if (symbol_idx >= 0 && !symbol_table[symbol_idx].is_array) {
+        fprintf(stderr, "Runtime error at line %d: '%s' is not an array\n", yylineno, name);
+        exit(1);
+    }
+}
+
 // Add a debug flag to help with debugging
-int debug_simulation = 1;  // Set to 1 to enable debug messages during simulation
+int debug_simulation = 0;  // Set to 1 to enable debug messages during simulation
 
 // Modify execute_instruction to add debug information
 int execute_instruction(int idx) {
     Instruction* instr = &instructions[idx];
     
     if (debug_simulation) {
-        printf("DEBUG: Executing instruction %d\n", idx);
-        if (instr->is_label) printf("DEBUG: Label: %s\n", instr->label);
-        else if (instr->is_goto) printf("DEBUG: Goto: %s\n", instr->label);
-        else if (instr->is_cond_jump) printf("DEBUG: Cond jump: %s to %s\n", instr->condition, instr->label);
-        else if (instr->is_print) printf("DEBUG: Print: %s\n", instr->arg1);
-        else if (instr->result) printf("DEBUG: Assignment: %s\n", instr->result);
+        printf("DEBUG[%d]: ", idx);
+        if (instr->is_label) printf("Label: %s\n", instr->label);
+        else if (instr->is_goto) printf("Goto: %s\n", instr->label);
+        else if (instr->is_cond_jump) printf("Cond jump: %s to %s\n", instr->condition, instr->label);
+        else if (instr->is_print) printf("Print: %s\n", instr->arg1);
+        else if (instr->is_scan) printf("Scan: %s, vars: %s\n", instr->arg1, instr->arg2 ? instr->arg2 : "none");
+        else if (instr->result) {
+            if (instr->op && instr->arg2)
+                printf("Op: %s := %s %s %s\n", instr->result, instr->arg1, instr->op, instr->arg2);
+            else if (instr->op)
+                printf("Op: %s := %s %s\n", instr->result, instr->op, instr->arg1);
+            else
+                printf("Assign: %s := %s\n", instr->result, instr->arg1);
+        }
     }
     
     // Handle label (no action needed, just for jumps)
@@ -515,10 +592,17 @@ int execute_instruction(int idx) {
             char* out_ptr = output;
             int val_idx = 0;
             
-            while (*fmt && val_idx < arg_count) {
+            while (*fmt) {
                 if (*fmt == '%' && *(fmt + 1) == 'd') {
-                    int chars = sprintf(out_ptr, "%d", values[val_idx++]);
-                    out_ptr += chars;
+                    if (val_idx < arg_count) {
+                        // We have a value for this format specifier
+                        int chars = sprintf(out_ptr, "%d", values[val_idx++]);
+                        out_ptr += chars;
+                    } else {
+                        // More format specifiers than values - print error indicator
+                        strcpy(out_ptr, "[ERROR:missing arg]");
+                        out_ptr += strlen("[ERROR:missing arg]");
+                    }
                     fmt += 2;
                 } else {
                     *out_ptr++ = *fmt++;
@@ -535,7 +619,7 @@ int execute_instruction(int idx) {
         free(clean_str);
         return idx + 1;
     }
-    
+
     // Handle scan
     if (instr->is_scan) {
         // Extract string without quotes
@@ -602,14 +686,21 @@ void execute_program() {
         return;
     }
     
-    // Print number of instructions for debugging
     if (debug_simulation) {
         printf("DEBUG: Executing %d instructions\n", instruction_count);
     }
     
     int pc = 0;  // Program counter
-    while (pc < instruction_count) {
+    int max_iterations = 1000; // Prevent infinite loops during development
+    int iteration_count = 0;
+    
+    while (pc < instruction_count && iteration_count < max_iterations) {
         pc = execute_instruction(pc);
+        iteration_count++;
+    }
+    
+    if (iteration_count >= max_iterations) {
+        printf("\nWarning: Execution stopped after %d instructions - possible infinite loop\n", max_iterations);
     }
     
     printf("\n=== End of Program Output ===\n");
@@ -651,16 +742,14 @@ void print_symbol_table() {
                symbol_table[i].is_array ? "yes" : "no");
     }
 }
+
 %}
+
 %union {
     int ival;
     double dval;
     char* sval;
 }
-
-%token <ival> DECIMAL
-%token <dval> DOUBLE
-%token <sval> IDENTIFIER STRING_LITERAL CHAR_LITERAL INTEGER_CONST
 
 %token BEGIN_TOKEN END_TOKEN PROGRAM VARDECL IF ELSE WHILE FOR TO INC DEC DO PRINT SCAN
 %token INT_TYPE CHAR_TYPE MAIN
@@ -670,6 +759,10 @@ void print_symbol_table() {
 %token OB CB MUL ADD SUB DIV MOD EQ GT LT GE LE NE
 %token AND OR NOT
 
+%token <ival> DECIMAL
+%token <dval> DOUBLE
+%token <sval> IDENTIFIER STRING_LITERAL CHAR_LITERAL INTEGER_CONST
+
 %type <sval> expression term factor condition assignment_op relop value bool_expr
 %type <sval> for_step for_dir
 %type <sval> assignment
@@ -677,17 +770,15 @@ void print_symbol_table() {
 %type <sval> formatArgs
 %type <sval> argList
 
-%nonassoc LOWER_THAN_ELSE
-%nonassoc ELSE
-
-
-
 %left OR
 %left AND
 %left EQ GT LT GE LE NE
 %left ADD SUB
 %left MUL DIV MOD
 %right NOT
+
+%nonassoc LOWER_THAN_ELSE
+%nonassoc ELSE
 
 %%
 
@@ -700,6 +791,7 @@ program
         yyerrok;
     }
     ;
+
 statementBlock
     : /* empty */
     | statement statementBlock
@@ -715,6 +807,7 @@ statement
     | block
     | block SEMICOLON  // Optional semicolon after blocks
     ;
+
 assignment
     : identifier assignment_op expression {
         if (strcmp($2, ":=") == 0) {
@@ -738,17 +831,15 @@ assignment_op
     | MODEQ   { $$ = strdup("%="); track_allocation($$); }
     ;
 
-
-
 while_loop
   : WHILE OB bool_expr CB DO
       {
-        /* 1) at “do”, generate labels & test */
+        /* 1) at "do", generate labels & test */
         char* start = newLabel();  track_allocation(start);
         char* end   = newLabel();  track_allocation(end);
         current_loop_start = start;
         current_loop_end   = end;
-
+        
         emitLabel(start);            /* L1: */
         emitCondJump($3, end);       /* if t_cond1 == 0 goto L2 */
       }
@@ -760,33 +851,24 @@ while_loop
       }
   ;
 
-
-
-// Correct implementation for for loop
 for_stmt
-  : FOR identifier ASSIGN expression
-        TO expression for_dir for_step DO
+  : FOR identifier ASSIGN expression TO expression for_dir for_step DO
       {
         /* 1) init loop var */
         emit($2, $4, NULL, NULL);             /* a := (10, 8) */
 
         /* 2) blank and loop‐start label */
-        printf("\n");
         char* start = newLabel();  track_allocation(start);
         char* end   = newLabel();  track_allocation(end);
         current_for_start = start;
         current_for_end   = end;
         emitLabel(start);  
-        printf("\n");
 
         /* 3) compute bound (t3) and step (t4) */
         char* bound = newTemp();
         emit(bound, $6, NULL, NULL);          /* t3 := b + (10, 2) */
-
         current_for_step_temp = newTemp();
-        emit(current_for_step_temp, $8, NULL, NULL);  
-                                              /* t4 := (1, 10) */
-        printf("\n");
+        emit(current_for_step_temp, $8, NULL, NULL);                              /* t4 := (1, 10) */
 
         /* 4) test and conditional jump - handle inc/dec direction */
         char* cond = newCondTemp();
@@ -796,7 +878,6 @@ for_stmt
             emit(cond, $2, "<", bound);           /* t_cond2 := a < t3 */
         }
         emitCondJumpTrue(cond, end);          /* if t_cond2 == 1 goto L4 */
-        printf("\n");
       }
     block
       {
@@ -809,27 +890,21 @@ for_stmt
         
         // Check the for_dir type
         if (strstr(dir, "inc")) {
-            emit(tmp, $2, "+", current_for_step_temp);
+            emit(tmp, $2, "+", current_for_step_temp);  
         } else {
-            emit(tmp, $2, "-", current_for_step_temp);
+            emit(tmp, $2, "-", current_for_step_temp);  
         }
         emit($2, tmp, NULL, NULL);             /* a := tmp */
-        printf("\n");
 
         /* 7) back‐edge and end label */
         emitGoto(current_for_start);
         emitLabel(current_for_end);            /* L4: */
-        printf("\n");
       }
   ;
 
-
-
-
-// -- IF-ELSE Statement --
 if_cond
   : IF OB bool_expr CB
-      { 
+      {
         /* 1) at “)”, make labels and emit the conditional jump */
         __if_false = newLabel();    track_allocation(__if_false);
         __if_end   = newLabel();    track_allocation(__if_end);
@@ -848,9 +923,6 @@ if_cond
         emitLabel(__if_end);
       }
   ;
-
-
-
 
 expression
     : term                   { $$ = $1; }
@@ -921,10 +993,6 @@ condition
   }
   ;
 
-
-
-
-
 relop
     : EQ { $$ = strdup("="); track_allocation($$); }
     | NE { $$ = strdup("!="); track_allocation($$); }
@@ -937,22 +1005,17 @@ relop
 block
     : BEGIN_TOKEN statementBlock END_TOKEN
     ;
-// -- FOR loop support --
+
+for_step
+    : expression { $$ = $1; }
+    ;
 
 for_dir
     : INC { $$ = strdup("inc"); track_allocation($$); }
     | DEC { $$ = strdup("dec"); track_allocation($$); }
     ;
 
-for_step
-    : expression { $$ = $1; }
-    ;
-
-// Fix for the while loop implementation
-// Correct implementation for while loop
-
 // -- PRINT and SCAN --
-
 print
     : PRINT OB STRING_LITERAL formatArgs CB SEMICOLON {
         if ($4) {
@@ -979,9 +1042,7 @@ formatArgs
     ;
 
 argList
-    : value {
-        $$ = strdup($1); track_allocation($$);
-    }
+    : value { $$ = strdup($1); track_allocation($$); }
     | value COMMA argList {
         char* temp = malloc(strlen($1) + strlen($3) + 2);
         sprintf(temp, "%s,%s", $1, $3);
@@ -997,7 +1058,6 @@ value
     ;
 
 // -- VarDecl Handling --
-
 varDecBlock
     : BEGIN_TOKEN VARDECL COLON VarDecList END_TOKEN VARDECL
     ;
@@ -1019,7 +1079,6 @@ VarDeclaration
         if (bracket_pos != NULL) {
             *bracket_pos = '\0';  // Terminate the string at the bracket
             is_array = 1;
-            
             // Extract array size if available
             char* size_str = bracket_pos + 1;
             char* close_bracket = strchr(size_str, ']');
@@ -1040,7 +1099,6 @@ VarDeclaration
                 symbol_table[idx].array_size = array_size;
             }
         }
-        
         free(base_name);
     }
     ;
@@ -1055,13 +1113,24 @@ type
     | CHAR_TYPE
     ;
 
-// -- Final Section --
-
 %%
 
 int main(int argc, char *argv[]) {
+    // Check for debug flag
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--debug") == 0) {
+            debug_simulation = 1;
+            // Remove this argument
+            for (int j = i; j < argc - 1; j++) {
+                argv[j] = argv[j + 1];
+            }
+            argc--;
+            break;
+        }
+    }
+
     if (argc != 2) {
-        fprintf(stderr, "Usage: %s <input file>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [-d|--debug] <input file>\n", argv[0]);
         return 1;
     }
 
@@ -1089,8 +1158,8 @@ int main(int argc, char *argv[]) {
         print_symbol_table();
     }
 
-    cleanup_memory();
     fclose(yyin);
+    cleanup_memory();
     return 0;
 }
 

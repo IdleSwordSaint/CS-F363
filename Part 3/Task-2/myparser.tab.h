@@ -54,61 +54,61 @@ extern int yydebug;
     YYEOF = 0,                     /* "end of file"  */
     YYerror = 256,                 /* error  */
     YYUNDEF = 257,                 /* "invalid token"  */
-    DECIMAL = 258,                 /* DECIMAL  */
-    DOUBLE = 259,                  /* DOUBLE  */
-    IDENTIFIER = 260,              /* IDENTIFIER  */
-    STRING_LITERAL = 261,          /* STRING_LITERAL  */
-    CHAR_LITERAL = 262,            /* CHAR_LITERAL  */
-    INTEGER_CONST = 263,           /* INTEGER_CONST  */
-    BEGIN_TOKEN = 264,             /* BEGIN_TOKEN  */
-    END_TOKEN = 265,               /* END_TOKEN  */
-    PROGRAM = 266,                 /* PROGRAM  */
-    VARDECL = 267,                 /* VARDECL  */
-    IF = 268,                      /* IF  */
-    ELSE = 269,                    /* ELSE  */
-    WHILE = 270,                   /* WHILE  */
-    FOR = 271,                     /* FOR  */
-    TO = 272,                      /* TO  */
-    INC = 273,                     /* INC  */
-    DEC = 274,                     /* DEC  */
-    DO = 275,                      /* DO  */
-    PRINT = 276,                   /* PRINT  */
-    SCAN = 277,                    /* SCAN  */
-    INT_TYPE = 278,                /* INT_TYPE  */
-    CHAR_TYPE = 279,               /* CHAR_TYPE  */
-    MAIN = 280,                    /* MAIN  */
-    ASSIGN = 281,                  /* ASSIGN  */
-    PLUSEQ = 282,                  /* PLUSEQ  */
-    MINUSEQ = 283,                 /* MINUSEQ  */
-    MULEQ = 284,                   /* MULEQ  */
-    DIVEQ = 285,                   /* DIVEQ  */
-    MODEQ = 286,                   /* MODEQ  */
-    SLCOMMENT = 287,               /* SLCOMMENT  */
-    MLCOMMENT = 288,               /* MLCOMMENT  */
-    COLON = 289,                   /* COLON  */
-    SEMICOLON = 290,               /* SEMICOLON  */
-    COMMA = 291,                   /* COMMA  */
-    LBRACKET = 292,                /* LBRACKET  */
-    RBRACKET = 293,                /* RBRACKET  */
-    QUOTE = 294,                   /* QUOTE  */
-    DQUOTE = 295,                  /* DQUOTE  */
-    AT = 296,                      /* AT  */
-    OB = 297,                      /* OB  */
-    CB = 298,                      /* CB  */
-    MUL = 299,                     /* MUL  */
-    ADD = 300,                     /* ADD  */
-    SUB = 301,                     /* SUB  */
-    DIV = 302,                     /* DIV  */
-    MOD = 303,                     /* MOD  */
-    EQ = 304,                      /* EQ  */
-    GT = 305,                      /* GT  */
-    LT = 306,                      /* LT  */
-    GE = 307,                      /* GE  */
-    LE = 308,                      /* LE  */
-    NE = 309,                      /* NE  */
-    AND = 310,                     /* AND  */
-    OR = 311,                      /* OR  */
-    NOT = 312,                     /* NOT  */
+    BEGIN_TOKEN = 258,             /* BEGIN_TOKEN  */
+    END_TOKEN = 259,               /* END_TOKEN  */
+    PROGRAM = 260,                 /* PROGRAM  */
+    VARDECL = 261,                 /* VARDECL  */
+    IF = 262,                      /* IF  */
+    ELSE = 263,                    /* ELSE  */
+    WHILE = 264,                   /* WHILE  */
+    FOR = 265,                     /* FOR  */
+    TO = 266,                      /* TO  */
+    INC = 267,                     /* INC  */
+    DEC = 268,                     /* DEC  */
+    DO = 269,                      /* DO  */
+    PRINT = 270,                   /* PRINT  */
+    SCAN = 271,                    /* SCAN  */
+    INT_TYPE = 272,                /* INT_TYPE  */
+    CHAR_TYPE = 273,               /* CHAR_TYPE  */
+    MAIN = 274,                    /* MAIN  */
+    ASSIGN = 275,                  /* ASSIGN  */
+    PLUSEQ = 276,                  /* PLUSEQ  */
+    MINUSEQ = 277,                 /* MINUSEQ  */
+    MULEQ = 278,                   /* MULEQ  */
+    DIVEQ = 279,                   /* DIVEQ  */
+    MODEQ = 280,                   /* MODEQ  */
+    SLCOMMENT = 281,               /* SLCOMMENT  */
+    MLCOMMENT = 282,               /* MLCOMMENT  */
+    COLON = 283,                   /* COLON  */
+    SEMICOLON = 284,               /* SEMICOLON  */
+    COMMA = 285,                   /* COMMA  */
+    LBRACKET = 286,                /* LBRACKET  */
+    RBRACKET = 287,                /* RBRACKET  */
+    QUOTE = 288,                   /* QUOTE  */
+    DQUOTE = 289,                  /* DQUOTE  */
+    AT = 290,                      /* AT  */
+    OB = 291,                      /* OB  */
+    CB = 292,                      /* CB  */
+    MUL = 293,                     /* MUL  */
+    ADD = 294,                     /* ADD  */
+    SUB = 295,                     /* SUB  */
+    DIV = 296,                     /* DIV  */
+    MOD = 297,                     /* MOD  */
+    EQ = 298,                      /* EQ  */
+    GT = 299,                      /* GT  */
+    LT = 300,                      /* LT  */
+    GE = 301,                      /* GE  */
+    LE = 302,                      /* LE  */
+    NE = 303,                      /* NE  */
+    AND = 304,                     /* AND  */
+    OR = 305,                      /* OR  */
+    NOT = 306,                     /* NOT  */
+    DECIMAL = 307,                 /* DECIMAL  */
+    DOUBLE = 308,                  /* DOUBLE  */
+    IDENTIFIER = 309,              /* IDENTIFIER  */
+    STRING_LITERAL = 310,          /* STRING_LITERAL  */
+    CHAR_LITERAL = 311,            /* CHAR_LITERAL  */
+    INTEGER_CONST = 312,           /* INTEGER_CONST  */
     LOWER_THAN_ELSE = 313          /* LOWER_THAN_ELSE  */
   };
   typedef enum yytokentype yytoken_kind_t;
@@ -118,7 +118,7 @@ extern int yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 655 "myparser.y"
+#line 748 "myparser.y"
 
     int ival;
     double dval;

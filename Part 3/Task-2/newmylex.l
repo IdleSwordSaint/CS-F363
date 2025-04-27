@@ -1,5 +1,5 @@
 %{
-#include myparser.tab.h"
+#include myparser.tab.h""
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,13 +39,18 @@ int convert_to_decimal(char* value_str, int base) {
 char* process_integer_constant(char* text) {
     // Make a copy of the input
     char* copy = strdup(text);
+    if (!copy) {
+        fprintf(stderr, "Memory allocation failed for integer constant\n");
+        return NULL;
+    }
+    
     // Extract value and base
     char* value_start = copy + 1;  // Skip '('
     char* comma = strchr(value_start, ',');
     if (!comma) {
         fprintf(stderr, "Invalid integer constant format: %s\n", text);
         free(copy);
-        exit(1);
+        return NULL;
     }
     
     *comma = '\0';  // Null-terminate value string
@@ -57,14 +62,19 @@ char* process_integer_constant(char* text) {
     
     // Remove closing parenthesis
     char* paren = strchr(base_start, ')');
-    if (paren) *paren = '\0';
+    if (!paren) {
+        fprintf(stderr, "Missing closing parenthesis in integer constant: %s\n", text);
+        free(copy);
+        return NULL;
+    }
+    *paren = '\0';
     
     // Convert base to integer
     int base = atoi(base_start);
     if (base != 2 && base != 8 && base != 10) {
         fprintf(stderr, "Invalid base %d in integer constant: %s\n", base, text);
         free(copy);
-        exit(1);
+        return NULL;
     }
     
     // Validate digits for the given base
@@ -73,18 +83,23 @@ char* process_integer_constant(char* text) {
         if (!isdigit(c)) {
             fprintf(stderr, "Invalid character '%c' in integer constant: %s\n", c, text);
             free(copy);
-            exit(1);
+            return NULL;
         }
         if ((base == 2 && c > '1') || (base == 8 && c > '7')) {
             fprintf(stderr, "Digit '%c' is out of range for base %d in: %s\n", c, base, text);
             free(copy);
-            exit(1);
+            return NULL;
         }
     }
     
     // Convert to decimal string representation
     int decimal_value = convert_to_decimal(value_str, base);
     char* result = malloc(20);  // Enough for any 32-bit integer
+    if (!result) {
+        fprintf(stderr, "Memory allocation failed for integer result\n");
+        free(copy);
+        return NULL;
+    }
     sprintf(result, "%d", decimal_value);
     
     free(copy);
@@ -164,28 +179,36 @@ char* process_integer_constant(char* text) {
 }
 
 [a-z][a-z0-9_]* {
-    yylval.sval = create_string(yytext);
+    yylval.sval = create_string(yytext);;
     return IDENTIFIER;
-}
-
+}       fprintf(stderr, "Error processing integer constant at line %d: %s\n", yylineno, yytext);
+        exit(1);
 [0-9]+\.[0-9]+ {
     yylval.dval = atof(yytext);
     return DOUBLE;
-}
+}}
 
-[0-9]+ {
-    yylval.sval = create_string(yytext);
+[0-9]+ {[ \t\r]+   { /* Ignore whitespace */ }
+    yylval.sval = create_string(yytext);ylineno++; }
     return INTEGER_CONST;
-}
+}   fprintf(stderr, "Unexpected character: %s at line %d\n", yytext, yylineno); 
+    exit(1); 
 
-\([0-9]+,[ ]*(2|8|10)\) {
-    yylval.sval = process_integer_constant(yytext);
-    return INTEGER_CONST;
-}
 
-[ \t\r]+   { /* Ignore whitespace */ }
-\n         { yylineno++; }
-.          { printf("Unexpected character: %s at line %d\n", yytext, yylineno); }
+
+
+
+
+
+
+
+
+
+
+
+
+
+}    return 1;int yywrap() {%%.          { printf("Unexpected character: %s at line %d\n", yytext, yylineno); }\n         { yylineno++; }[ \t\r]+   { /* Ignore whitespace */ }}    return INTEGER_CONST;    yylval.sval = process_integer_constant(yytext);\([0-9]+,[ ]*(2|8|10)\) {}
 
 %%
 
