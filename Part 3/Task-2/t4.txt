@@ -1,0 +1,27 @@
+begin program:
+begin VarDecl:
+(a, int);
+(x, int);
+(y, int);
+(z, int);
+(ch, char);
+end VarDecl
+
+a := (10, 10);
+if (a < (20, 10))
+begin
+print("a is less than 20");
+x := (8, 10);
+y := (3, 8);
+z := x * y;
+print("x = @, y = @, z = @", x, y, z);
+end;
+else
+begin
+print("a is not less than 20");
+ch := 'a';
+end;
+end program
+
+
+

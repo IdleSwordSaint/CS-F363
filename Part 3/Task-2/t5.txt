@@ -1,0 +1,27 @@
+begin program:
+begin VarDecl:
+(i, int);
+(arr[4], char);
+(a, int);
+(k, int);
+end VarDecl
+i := (5, 10);
+for i := (10, 10) to (1, 10) dc (2, 10) do
+begin
+print("i = @", i);
+end;
+if (a < (20, 10))
+begin
+print("a is less than 20");
+end
+
+k := (3, 10);
+while (k > (0, 10) do 
+begin
+print("@", k);
+k := k - (1, 10);
+end;
+end program
+
+
+
