@@ -468,13 +468,15 @@ void execute_for(const ASTNode* node) {
     int step_value = evaluate_expression(step_node->data.compound.children[0]);
     int is_inc = strcmp(step_node->operator, "inc") == 0;
     
+    // Calculate the limit ONCE before entering the loop, not on every iteration
+    int limit = evaluate_expression(limit_expr);
+    
     int max_iterations = 10000; // Safety limit
     int iteration = 0;
     
     while (1) {
-        // Get current loop variable value and limit
+        // Get current loop variable value
         int current = get_int_value(init_assign->data.compound.children[0]);
-        int limit = evaluate_expression(limit_expr);
         
         if (debug_simulation) {
             printf("DEBUG: For loop - %s=%d, limit=%d, step=%d, is_inc=%d\n", 

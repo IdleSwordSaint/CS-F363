@@ -45,7 +45,7 @@
 extern int yydebug;
 #endif
 /* "%code requires" blocks.  */
-#line 660 "myparser.y"
+#line 662 "myparser.y"
 
     #include "ast.h"  // Ensures ASTNode is known in parser.tab.h
 
@@ -117,7 +117,7 @@ extern int yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 664 "myparser.y"
+#line 666 "myparser.y"
 
     int int_val;
     char char_val;

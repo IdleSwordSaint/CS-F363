@@ -538,13 +538,15 @@ void execute_for(const ASTNode* node) {
     int step_value = evaluate_expression(step_node->data.compound.children[0]);
     int is_inc = strcmp(step_node->operator, "inc") == 0;
     
+    // Calculate the limit ONCE before entering the loop, not on every iteration
+    int limit = evaluate_expression(limit_expr);
+    
     int max_iterations = 10000; // Safety limit
     int iteration = 0;
     
     while (1) {
-        // Get current loop variable value and limit
+        // Get current loop variable value
         int current = get_int_value(init_assign->data.compound.children[0]);
-        int limit = evaluate_expression(limit_expr);
         
         if (debug_simulation) {
             printf("DEBUG: For loop - %s=%d, limit=%d, step=%d, is_inc=%d\n", 
@@ -726,7 +728,7 @@ void print_symbol_table() {
 }
 
 
-#line 730 "myparser.tab.c"
+#line 732 "myparser.tab.c"
 
 # ifndef YY_CAST
 #  ifdef __cplusplus
@@ -1227,14 +1229,14 @@ static const yytype_int8 yytranslate[] =
 /* YYRLINE[YYN] -- Source line where rule number YYN was defined.  */
 static const yytype_int16 yyrline[] =
 {
-       0,   692,   692,   700,   706,   715,   721,   724,   727,   733,
-     736,   744,   747,   750,   753,   756,   759,   762,   768,   785,
-     786,   792,   798,   804,   810,   819,   823,   824,   835,   836,
-     843,   847,   852,   861,   869,   893,   920,   931,   932,   936,
-     940,   947,   957,   961,   968,   969,   980,   996,   997,  1013,
-    1014,  1015,  1016,  1017,  1018,  1022,  1023,  1024,  1025,  1026,
-    1027,  1031,  1032,  1036,  1043,  1047,  1054,  1078,  1079,  1087,
-    1092,  1101
+       0,   694,   694,   702,   708,   717,   723,   726,   729,   735,
+     738,   746,   749,   752,   755,   758,   761,   764,   770,   787,
+     788,   794,   800,   806,   812,   821,   825,   826,   837,   838,
+     845,   849,   854,   863,   871,   895,   922,   933,   934,   938,
+     942,   949,   959,   963,   970,   971,   982,   998,   999,  1015,
+    1016,  1017,  1018,  1019,  1020,  1024,  1025,  1026,  1027,  1028,
+    1029,  1033,  1034,  1038,  1045,  1049,  1056,  1080,  1081,  1089,
+    1094,  1103
 };
 #endif
 
@@ -1901,28 +1903,28 @@ yyreduce:
   switch (yyn)
     {
   case 2: /* program: comment BEGIN_TOKEN PROGRAM COLON varDecBlock statementBlock END_TOKEN PROGRAM comment  */
-#line 692 "myparser.y"
+#line 694 "myparser.y"
                                                                                              {
         ast_root = create_node(NODE_PROGRAM);
         add_child(ast_root, (yyvsp[-4].node));
         add_child(ast_root, (yyvsp[-3].node));
     }
-#line 1911 "myparser.tab.c"
+#line 1913 "myparser.tab.c"
     break;
 
   case 3: /* condition: expression relop expression  */
-#line 700 "myparser.y"
+#line 702 "myparser.y"
                                   {
         (yyval.node) = create_node(NODE_RELOP);
         (yyval.node)->operator = (yyvsp[-1].string);
         add_child((yyval.node), (yyvsp[-2].node));
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 1922 "myparser.tab.c"
+#line 1924 "myparser.tab.c"
     break;
 
   case 4: /* condition: expression relop DECIMAL  */
-#line 706 "myparser.y"
+#line 708 "myparser.y"
                                {
         (yyval.node) = create_node(NODE_RELOP);
         (yyval.node)->operator = (yyvsp[-1].string);
@@ -1932,117 +1934,117 @@ yyreduce:
         num->data.int_const.base = 10;
         add_child((yyval.node), num);
     }
-#line 1936 "myparser.tab.c"
+#line 1938 "myparser.tab.c"
     break;
 
   case 5: /* condition: expression  */
-#line 715 "myparser.y"
+#line 717 "myparser.y"
                  {
         (yyval.node) = (yyvsp[0].node);
     }
-#line 1944 "myparser.tab.c"
+#line 1946 "myparser.tab.c"
     break;
 
   case 6: /* comment: SLCOMMENT  */
-#line 721 "myparser.y"
+#line 723 "myparser.y"
                 {
         (yyval.node) = create_node(NODE_COMMENT);
     }
-#line 1952 "myparser.tab.c"
+#line 1954 "myparser.tab.c"
     break;
 
   case 7: /* comment: MLCOMMENT  */
-#line 724 "myparser.y"
+#line 726 "myparser.y"
                 {
         (yyval.node) = create_node(NODE_COMMENT);
     }
-#line 1960 "myparser.tab.c"
+#line 1962 "myparser.tab.c"
     break;
 
   case 8: /* comment: %empty  */
-#line 727 "myparser.y"
+#line 729 "myparser.y"
                   {
         (yyval.node) = NULL;
     }
-#line 1968 "myparser.tab.c"
+#line 1970 "myparser.tab.c"
     break;
 
   case 9: /* statementBlock: %empty  */
-#line 733 "myparser.y"
+#line 735 "myparser.y"
                   {
         (yyval.node) = create_node(NODE_BLOCK);
     }
-#line 1976 "myparser.tab.c"
+#line 1978 "myparser.tab.c"
     break;
 
   case 10: /* statementBlock: statement statementBlock  */
-#line 736 "myparser.y"
+#line 738 "myparser.y"
                                {
         (yyval.node) = create_node(NODE_BLOCK);
         add_child((yyval.node), (yyvsp[-1].node));
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 1986 "myparser.tab.c"
+#line 1988 "myparser.tab.c"
     break;
 
   case 11: /* statement: assignment SEMICOLON  */
-#line 744 "myparser.y"
+#line 746 "myparser.y"
                            {
         (yyval.node) = (yyvsp[-1].node);
     }
-#line 1994 "myparser.tab.c"
+#line 1996 "myparser.tab.c"
     break;
 
   case 12: /* statement: if_cond  */
-#line 747 "myparser.y"
+#line 749 "myparser.y"
               {
         (yyval.node) = (yyvsp[0].node);
     }
-#line 2002 "myparser.tab.c"
+#line 2004 "myparser.tab.c"
     break;
 
   case 13: /* statement: while_loop  */
-#line 750 "myparser.y"
+#line 752 "myparser.y"
                  {
         (yyval.node) = (yyvsp[0].node);
     }
-#line 2010 "myparser.tab.c"
+#line 2012 "myparser.tab.c"
     break;
 
   case 14: /* statement: for_loop  */
-#line 753 "myparser.y"
+#line 755 "myparser.y"
                {
         (yyval.node) = (yyvsp[0].node);
     }
-#line 2018 "myparser.tab.c"
+#line 2020 "myparser.tab.c"
     break;
 
   case 15: /* statement: print  */
-#line 756 "myparser.y"
+#line 758 "myparser.y"
             {
         (yyval.node) = (yyvsp[0].node);
     }
-#line 2026 "myparser.tab.c"
+#line 2028 "myparser.tab.c"
     break;
 
   case 16: /* statement: scan  */
-#line 759 "myparser.y"
+#line 761 "myparser.y"
            {
         (yyval.node) = (yyvsp[0].node);
     }
-#line 2034 "myparser.tab.c"
+#line 2036 "myparser.tab.c"
     break;
 
   case 17: /* statement: block  */
-#line 762 "myparser.y"
+#line 764 "myparser.y"
             {
         (yyval.node) = (yyvsp[0].node);
     }
-#line 2042 "myparser.tab.c"
+#line 2044 "myparser.tab.c"
     break;
 
   case 18: /* assignment: IDENTIFIER assignment_op expression  */
-#line 768 "myparser.y"
+#line 770 "myparser.y"
                                           {
         int idx = find_symbol((yyvsp[-2].string));
         if (idx < 0) {
@@ -2057,84 +2059,84 @@ yyreduce:
         add_child((yyval.node), id);
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2061 "myparser.tab.c"
+#line 2063 "myparser.tab.c"
     break;
 
   case 19: /* expression: term  */
-#line 785 "myparser.y"
+#line 787 "myparser.y"
            { (yyval.node) = (yyvsp[0].node); }
-#line 2067 "myparser.tab.c"
+#line 2069 "myparser.tab.c"
     break;
 
   case 20: /* expression: expression ADD expression  */
-#line 786 "myparser.y"
+#line 788 "myparser.y"
                                 {
         (yyval.node) = create_node(NODE_BINARY_OP);
         (yyval.node)->operator = (yyvsp[-1].string);
         add_child((yyval.node), (yyvsp[-2].node));
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2078 "myparser.tab.c"
+#line 2080 "myparser.tab.c"
     break;
 
   case 21: /* expression: expression SUB expression  */
-#line 792 "myparser.y"
+#line 794 "myparser.y"
                                 {
         (yyval.node) = create_node(NODE_BINARY_OP);
         (yyval.node)->operator = (yyvsp[-1].string);
         add_child((yyval.node), (yyvsp[-2].node));
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2089 "myparser.tab.c"
+#line 2091 "myparser.tab.c"
     break;
 
   case 22: /* expression: expression MUL expression  */
-#line 798 "myparser.y"
+#line 800 "myparser.y"
                                 {
         (yyval.node) = create_node(NODE_BINARY_OP);
         (yyval.node)->operator = (yyvsp[-1].string);
         add_child((yyval.node), (yyvsp[-2].node));
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2100 "myparser.tab.c"
+#line 2102 "myparser.tab.c"
     break;
 
   case 23: /* expression: expression DIV expression  */
-#line 804 "myparser.y"
+#line 806 "myparser.y"
                                 {
         (yyval.node) = create_node(NODE_BINARY_OP);
         (yyval.node)->operator = (yyvsp[-1].string);
         add_child((yyval.node), (yyvsp[-2].node));
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2111 "myparser.tab.c"
+#line 2113 "myparser.tab.c"
     break;
 
   case 24: /* expression: expression MOD expression  */
-#line 810 "myparser.y"
+#line 812 "myparser.y"
                                 {
         (yyval.node) = create_node(NODE_BINARY_OP);
         (yyval.node)->operator = (yyvsp[-1].string);
         add_child((yyval.node), (yyvsp[-2].node));
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2122 "myparser.tab.c"
+#line 2124 "myparser.tab.c"
     break;
 
   case 25: /* term: factor  */
-#line 819 "myparser.y"
+#line 821 "myparser.y"
              { (yyval.node) = (yyvsp[0].node); }
-#line 2128 "myparser.tab.c"
+#line 2130 "myparser.tab.c"
     break;
 
   case 26: /* factor: OB expression CB  */
-#line 823 "myparser.y"
+#line 825 "myparser.y"
                        { (yyval.node) = (yyvsp[-1].node); }
-#line 2134 "myparser.tab.c"
+#line 2136 "myparser.tab.c"
     break;
 
   case 27: /* factor: IDENTIFIER arrIndex  */
-#line 824 "myparser.y"
+#line 826 "myparser.y"
                           {
         int idx = find_symbol((yyvsp[-1].string));
         if (idx < 0) {
@@ -2146,63 +2148,63 @@ yyreduce:
         track_allocation((yyval.node)->data.string_value);
         if ((yyvsp[0].node)) add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2150 "myparser.tab.c"
+#line 2152 "myparser.tab.c"
     break;
 
   case 28: /* factor: integerConst  */
-#line 835 "myparser.y"
+#line 837 "myparser.y"
                    { (yyval.node) = (yyvsp[0].node); }
-#line 2156 "myparser.tab.c"
+#line 2158 "myparser.tab.c"
     break;
 
   case 29: /* factor: CHAR_LITERAL  */
-#line 836 "myparser.y"
+#line 838 "myparser.y"
                    {
         (yyval.node) = create_node(NODE_CHAR_CONST);
         (yyval.node)->data.char_value = (yyvsp[0].char_val);
     }
-#line 2165 "myparser.tab.c"
+#line 2167 "myparser.tab.c"
     break;
 
   case 30: /* block: BEGIN_TOKEN statementBlock END_TOKEN  */
-#line 843 "myparser.y"
+#line 845 "myparser.y"
                                            { (yyval.node) = (yyvsp[-1].node); }
-#line 2171 "myparser.tab.c"
+#line 2173 "myparser.tab.c"
     break;
 
   case 31: /* if_cond: IF OB condition CB block SEMICOLON  */
-#line 847 "myparser.y"
+#line 849 "myparser.y"
                                          {
         (yyval.node) = create_node(NODE_IF);
         add_child((yyval.node), (yyvsp[-3].node));
         add_child((yyval.node), (yyvsp[-1].node));
     }
-#line 2181 "myparser.tab.c"
+#line 2183 "myparser.tab.c"
     break;
 
   case 32: /* if_cond: IF OB condition CB block ELSE block SEMICOLON  */
-#line 852 "myparser.y"
+#line 854 "myparser.y"
                                                     {
         (yyval.node) = create_node(NODE_IF);
         add_child((yyval.node), (yyvsp[-5].node));
         add_child((yyval.node), (yyvsp[-3].node));
         add_child((yyval.node), (yyvsp[-1].node));
     }
-#line 2192 "myparser.tab.c"
+#line 2194 "myparser.tab.c"
     break;
 
   case 33: /* while_loop: WHILE OB condition CB DO block SEMICOLON  */
-#line 861 "myparser.y"
+#line 863 "myparser.y"
                                                {
         (yyval.node) = create_node(NODE_WHILE);
         add_child((yyval.node), (yyvsp[-4].node));
         add_child((yyval.node), (yyvsp[-1].node));
     }
-#line 2202 "myparser.tab.c"
+#line 2204 "myparser.tab.c"
     break;
 
   case 34: /* for_loop: FOR IDENTIFIER ASSIGN expression TO expression INC expression DO block SEMICOLON  */
-#line 869 "myparser.y"
+#line 871 "myparser.y"
                                                                                        {
         int idx = find_symbol((yyvsp[-9].string));
         if (idx < 0) {
@@ -2227,11 +2229,11 @@ yyreduce:
         add_child((yyval.node), inc);
         add_child((yyval.node), (yyvsp[-1].node));
     }
-#line 2231 "myparser.tab.c"
+#line 2233 "myparser.tab.c"
     break;
 
   case 35: /* for_loop: FOR IDENTIFIER ASSIGN expression TO expression DEC expression DO block SEMICOLON  */
-#line 893 "myparser.y"
+#line 895 "myparser.y"
                                                                                        {
         int idx = find_symbol((yyvsp[-9].string));
         if (idx < 0) {
@@ -2256,11 +2258,11 @@ yyreduce:
         add_child((yyval.node), dec);
         add_child((yyval.node), (yyvsp[-1].node));
     }
-#line 2260 "myparser.tab.c"
+#line 2262 "myparser.tab.c"
     break;
 
   case 36: /* print: PRINT OB STRING_LITERAL formatArgs CB SEMICOLON  */
-#line 920 "myparser.y"
+#line 922 "myparser.y"
                                                       {
         (yyval.node) = create_node(NODE_PRINT);
         ASTNode* str = create_node(NODE_STRING_CONST);
@@ -2269,41 +2271,41 @@ yyreduce:
         add_child((yyval.node), str);
         add_child((yyval.node), (yyvsp[-2].node));
     }
-#line 2273 "myparser.tab.c"
+#line 2275 "myparser.tab.c"
     break;
 
   case 37: /* formatArgs: %empty  */
-#line 931 "myparser.y"
+#line 933 "myparser.y"
                   { (yyval.node) = NULL; }
-#line 2279 "myparser.tab.c"
+#line 2281 "myparser.tab.c"
     break;
 
   case 38: /* formatArgs: COMMA argList  */
-#line 932 "myparser.y"
+#line 934 "myparser.y"
                     { (yyval.node) = (yyvsp[0].node); }
-#line 2285 "myparser.tab.c"
+#line 2287 "myparser.tab.c"
     break;
 
   case 39: /* argList: value  */
-#line 936 "myparser.y"
+#line 938 "myparser.y"
             {
         (yyval.node) = create_node(NODE_BLOCK);
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2294 "myparser.tab.c"
+#line 2296 "myparser.tab.c"
     break;
 
   case 40: /* argList: value COMMA argList  */
-#line 940 "myparser.y"
+#line 942 "myparser.y"
                           {
         (yyval.node) = (yyvsp[0].node);
         add_child((yyval.node), (yyvsp[-2].node));
     }
-#line 2303 "myparser.tab.c"
+#line 2305 "myparser.tab.c"
     break;
 
   case 41: /* value: IDENTIFIER  */
-#line 947 "myparser.y"
+#line 949 "myparser.y"
                  {
         int idx = find_symbol((yyvsp[0].string));
         if (idx < 0) {
@@ -2314,32 +2316,32 @@ yyreduce:
         (yyval.node)->data.string_value = strdup((yyvsp[0].string));
         track_allocation((yyval.node)->data.string_value);
     }
-#line 2318 "myparser.tab.c"
+#line 2320 "myparser.tab.c"
     break;
 
   case 42: /* value: integerConst  */
-#line 957 "myparser.y"
+#line 959 "myparser.y"
                    { (yyval.node) = (yyvsp[0].node); }
-#line 2324 "myparser.tab.c"
+#line 2326 "myparser.tab.c"
     break;
 
   case 43: /* scan: SCAN OB scanArgs CB SEMICOLON  */
-#line 961 "myparser.y"
+#line 963 "myparser.y"
                                     {
         (yyval.node) = create_node(NODE_SCAN);
         add_child((yyval.node), (yyvsp[-2].node));
     }
-#line 2333 "myparser.tab.c"
+#line 2335 "myparser.tab.c"
     break;
 
   case 44: /* scanArgs: identifierList  */
-#line 968 "myparser.y"
+#line 970 "myparser.y"
                      { (yyval.node) = (yyvsp[0].node); }
-#line 2339 "myparser.tab.c"
+#line 2341 "myparser.tab.c"
     break;
 
   case 45: /* scanArgs: STRING_LITERAL COMMA identifierList  */
-#line 969 "myparser.y"
+#line 971 "myparser.y"
                                           {
         (yyval.node) = create_node(NODE_BLOCK);
         ASTNode* str = create_node(NODE_STRING_CONST);
@@ -2348,11 +2350,11 @@ yyreduce:
         add_child((yyval.node), str);
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2352 "myparser.tab.c"
+#line 2354 "myparser.tab.c"
     break;
 
   case 46: /* identifierList: IDENTIFIER identifierListT  */
-#line 980 "myparser.y"
+#line 982 "myparser.y"
                                  {
         int idx = find_symbol((yyvsp[-1].string));
         if (idx < 0) {
@@ -2366,17 +2368,17 @@ yyreduce:
         add_child((yyval.node), id);
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2370 "myparser.tab.c"
+#line 2372 "myparser.tab.c"
     break;
 
   case 47: /* identifierListT: %empty  */
-#line 996 "myparser.y"
+#line 998 "myparser.y"
                   { (yyval.node) = NULL; }
-#line 2376 "myparser.tab.c"
+#line 2378 "myparser.tab.c"
     break;
 
   case 48: /* identifierListT: COMMA IDENTIFIER identifierListT  */
-#line 997 "myparser.y"
+#line 999 "myparser.y"
                                        {
         int idx = find_symbol((yyvsp[-1].string));
         if (idx < 0) {
@@ -2390,122 +2392,122 @@ yyreduce:
         add_child((yyval.node), id);
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2394 "myparser.tab.c"
+#line 2396 "myparser.tab.c"
     break;
 
   case 49: /* assignment_op: ASSIGN  */
-#line 1013 "myparser.y"
+#line 1015 "myparser.y"
              { (yyval.string) = strdup(":="); track_allocation((yyval.string)); }
-#line 2400 "myparser.tab.c"
+#line 2402 "myparser.tab.c"
     break;
 
   case 50: /* assignment_op: PLUSEQ  */
-#line 1014 "myparser.y"
+#line 1016 "myparser.y"
              { (yyval.string) = strdup("+="); track_allocation((yyval.string)); }
-#line 2406 "myparser.tab.c"
+#line 2408 "myparser.tab.c"
     break;
 
   case 51: /* assignment_op: MINUSEQ  */
-#line 1015 "myparser.y"
+#line 1017 "myparser.y"
               { (yyval.string) = strdup("-="); track_allocation((yyval.string)); }
-#line 2412 "myparser.tab.c"
+#line 2414 "myparser.tab.c"
     break;
 
   case 52: /* assignment_op: MULEQ  */
-#line 1016 "myparser.y"
+#line 1018 "myparser.y"
             { (yyval.string) = strdup("*="); track_allocation((yyval.string)); }
-#line 2418 "myparser.tab.c"
+#line 2420 "myparser.tab.c"
     break;
 
   case 53: /* assignment_op: DIVEQ  */
-#line 1017 "myparser.y"
+#line 1019 "myparser.y"
             { (yyval.string) = strdup("/="); track_allocation((yyval.string)); }
-#line 2424 "myparser.tab.c"
+#line 2426 "myparser.tab.c"
     break;
 
   case 54: /* assignment_op: MODEQ  */
-#line 1018 "myparser.y"
+#line 1020 "myparser.y"
             { (yyval.string) = strdup("%="); track_allocation((yyval.string)); }
-#line 2430 "myparser.tab.c"
+#line 2432 "myparser.tab.c"
     break;
 
   case 55: /* relop: EQ  */
-#line 1022 "myparser.y"
+#line 1024 "myparser.y"
          { (yyval.string) = strdup("="); track_allocation((yyval.string)); }
-#line 2436 "myparser.tab.c"
+#line 2438 "myparser.tab.c"
     break;
 
   case 56: /* relop: GE  */
-#line 1023 "myparser.y"
+#line 1025 "myparser.y"
          { (yyval.string) = strdup(">="); track_allocation((yyval.string)); }
-#line 2442 "myparser.tab.c"
+#line 2444 "myparser.tab.c"
     break;
 
   case 57: /* relop: GT  */
-#line 1024 "myparser.y"
+#line 1026 "myparser.y"
          { (yyval.string) = strdup(">"); track_allocation((yyval.string)); }
-#line 2448 "myparser.tab.c"
+#line 2450 "myparser.tab.c"
     break;
 
   case 58: /* relop: LE  */
-#line 1025 "myparser.y"
+#line 1027 "myparser.y"
          { (yyval.string) = strdup("<="); track_allocation((yyval.string)); }
-#line 2454 "myparser.tab.c"
+#line 2456 "myparser.tab.c"
     break;
 
   case 59: /* relop: LT  */
-#line 1026 "myparser.y"
+#line 1028 "myparser.y"
          { (yyval.string) = strdup("<"); track_allocation((yyval.string)); }
-#line 2460 "myparser.tab.c"
+#line 2462 "myparser.tab.c"
     break;
 
   case 60: /* relop: NE  */
-#line 1027 "myparser.y"
+#line 1029 "myparser.y"
          { (yyval.string) = strdup("!="); track_allocation((yyval.string)); }
-#line 2466 "myparser.tab.c"
+#line 2468 "myparser.tab.c"
     break;
 
   case 61: /* arrIndex: %empty  */
-#line 1031 "myparser.y"
+#line 1033 "myparser.y"
                   { (yyval.node) = NULL; }
-#line 2472 "myparser.tab.c"
+#line 2474 "myparser.tab.c"
     break;
 
   case 62: /* arrIndex: LBRACKET expression RBRACKET  */
-#line 1032 "myparser.y"
+#line 1034 "myparser.y"
                                    { (yyval.node) = (yyvsp[-1].node); }
-#line 2478 "myparser.tab.c"
+#line 2480 "myparser.tab.c"
     break;
 
   case 63: /* varDecBlock: BEGIN_TOKEN VARDECL COLON comment VarDecList comment END_TOKEN VARDECL  */
-#line 1036 "myparser.y"
+#line 1038 "myparser.y"
                                                                              {
         (yyval.node) = create_node(NODE_BLOCK);
         add_child((yyval.node), (yyvsp[-3].node));
     }
-#line 2487 "myparser.tab.c"
+#line 2489 "myparser.tab.c"
     break;
 
   case 64: /* VarDecList: VarDeclaration  */
-#line 1043 "myparser.y"
+#line 1045 "myparser.y"
                      {
         (yyval.node) = create_node(NODE_BLOCK);
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2496 "myparser.tab.c"
+#line 2498 "myparser.tab.c"
     break;
 
   case 65: /* VarDecList: VarDecList VarDeclaration  */
-#line 1047 "myparser.y"
+#line 1049 "myparser.y"
                                 {
         (yyval.node) = (yyvsp[-1].node);
         add_child((yyval.node), (yyvsp[0].node));
     }
-#line 2505 "myparser.tab.c"
+#line 2507 "myparser.tab.c"
     break;
 
   case 66: /* VarDeclaration: OB IDENTIFIER arrayDec COMMA type CB SEMICOLON  */
-#line 1054 "myparser.y"
+#line 1056 "myparser.y"
                                                      {
         VarType var_type;
         if (strcmp((yyvsp[-2].node)->data.string_value, "int") == 0) {
@@ -2527,47 +2529,47 @@ yyreduce:
         add_child((yyval.node), (yyvsp[-2].node));
         if ((yyvsp[-4].node)) add_child((yyval.node), (yyvsp[-4].node));
     }
-#line 2531 "myparser.tab.c"
+#line 2533 "myparser.tab.c"
     break;
 
   case 67: /* arrayDec: %empty  */
-#line 1078 "myparser.y"
+#line 1080 "myparser.y"
                   { (yyval.node) = NULL; }
-#line 2537 "myparser.tab.c"
+#line 2539 "myparser.tab.c"
     break;
 
   case 68: /* arrayDec: LBRACKET DECIMAL RBRACKET  */
-#line 1079 "myparser.y"
+#line 1081 "myparser.y"
                                 {
         (yyval.node) = create_node(NODE_INT_CONST);
         (yyval.node)->data.int_const.int_value = (yyvsp[-1].int_val);
         (yyval.node)->data.int_const.base = 10;
     }
-#line 2547 "myparser.tab.c"
+#line 2549 "myparser.tab.c"
     break;
 
   case 69: /* type: INT_TYPE  */
-#line 1087 "myparser.y"
+#line 1089 "myparser.y"
                {
         (yyval.node) = create_node(NODE_TYPE);
         (yyval.node)->data.string_value = strdup("int");
         track_allocation((yyval.node)->data.string_value);
     }
-#line 2557 "myparser.tab.c"
+#line 2559 "myparser.tab.c"
     break;
 
   case 70: /* type: CHAR_TYPE  */
-#line 1092 "myparser.y"
+#line 1094 "myparser.y"
                 {
         (yyval.node) = create_node(NODE_TYPE);
         (yyval.node)->data.string_value = strdup("char");
         track_allocation((yyval.node)->data.string_value);
     }
-#line 2567 "myparser.tab.c"
+#line 2569 "myparser.tab.c"
     break;
 
   case 71: /* integerConst: OB DECIMAL COMMA DECIMAL CB  */
-#line 1101 "myparser.y"
+#line 1103 "myparser.y"
                                   {
         if ((yyvsp[-1].int_val) != 2 && (yyvsp[-1].int_val) != 8 && (yyvsp[-1].int_val) != 10) {
             printf("Invalid base %d at line %d\n", (yyvsp[-1].int_val), yylineno);
@@ -2588,11 +2590,11 @@ yyreduce:
         (yyval.node)->data.int_const.int_value = decimal_value;  // Store the converted decimal value
         (yyval.node)->data.int_const.base = (yyvsp[-1].int_val);  // Keep original base for reference
     }
-#line 2592 "myparser.tab.c"
+#line 2594 "myparser.tab.c"
     break;
 
 
-#line 2596 "myparser.tab.c"
+#line 2598 "myparser.tab.c"
 
       default: break;
     }
@@ -2785,7 +2787,7 @@ yyreturnlab:
   return yyresult;
 }
 
-#line 1123 "myparser.y"
+#line 1125 "myparser.y"
 
 
 int main(int argc, char *argv[]) {
