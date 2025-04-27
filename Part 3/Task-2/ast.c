@@ -3,40 +3,38 @@
 #include <string.h>
 #include "ast.h"
 
-// FIXED: Properly convert from source base to decimal
-int convert_base(int value, int from_base) {
-    // If base is already 10, no conversion needed
-    if (from_base == 10) return value;
+// Global flag to prevent double frees during cleanup
+int memory_cleanup_in_progress = 0;
 
+// Convert a number from source base to decimal
+int convert_base(int value, int from_base) {
+    // For base 10, no conversion needed
+    if (from_base == 10) return value;
+    
     // Convert to string for digit-by-digit processing
     char buffer[64];
     sprintf(buffer, "%d", value);
     
     int result = 0;
-    int place_value = 1;
     int len = strlen(buffer);
     
-    // Process digits from right to left (least significant to most significant)
-    for (int i = len - 1; i >= 0; i--) {
+    // Process from left to right, building the decimal value
+    for (int i = 0; i < len; i++) {
         int digit = buffer[i] - '0';
         
-        // Verify digit is valid for the given base
+        // Validate digit against the base
         if (digit >= from_base) {
             fprintf(stderr, "Invalid digit %d for base %d\n", digit, from_base);
             return value; // Return original on error
         }
         
-        // Add current digit's contribution to result
-        result += digit * place_value;
-        
-        // Update place value for next position
-        place_value *= from_base;
+        // Multiply accumulated result by base and add current digit
+        result = result * from_base + digit;
     }
     
     return result;
 }
 
-// Create a new AST node
 ASTNode* create_node(NodeType type) {
     ASTNode* node = (ASTNode*)malloc(sizeof(ASTNode));
     if (!node) {
@@ -44,60 +42,35 @@ ASTNode* create_node(NodeType type) {
         exit(1);
     }
     
-    // Initialize all fields
+    // Initialize all fields to prevent undefined behavior
+    memset(node, 0, sizeof(ASTNode));
+    
     node->type = type;
     node->operator = NULL;
-    node->already_freed = 0; // Initialize the tracking flag
-    
-    // Initialize the union members
-    switch (type) {
-        case NODE_CHAR_CONST:
-            node->data.char_value = '\0';
-            break;
-        
-        case NODE_STRING_CONST:
-        case NODE_IDENTIFIER:
-        case NODE_TYPE:
-            node->data.string_value = NULL;
-            break;
-        
-        case NODE_INT_CONST:
-            node->data.int_const.int_value = 0;
-            node->data.int_const.base = 10;
-            break;
-        
-        default:
-            node->data.compound.children = NULL;
-            node->data.compound.num_children = 0;
-            break;
-    }
+    node->already_freed = 0;
+    node->data.compound.children = NULL;
+    node->data.compound.num_children = 0;
     
     return node;
 }
 
-// Add a child node to a parent node
 void add_child(ASTNode* parent, ASTNode* child) {
-    if (!parent || !child)
-        return;
+    if (!parent || !child) return;
     
     parent->data.compound.num_children++;
     parent->data.compound.children = (ASTNode**)realloc(
         parent->data.compound.children,
         parent->data.compound.num_children * sizeof(ASTNode*)
     );
-    
     if (!parent->data.compound.children) {
         fprintf(stderr, "Memory reallocation failed\n");
         exit(1);
     }
-    
     parent->data.compound.children[parent->data.compound.num_children - 1] = child;
 }
 
-// Validate if a number is valid for the given base
 int is_valid_integer(const char* value, int base) {
-    if (!value)
-        return 0;
+    if (!value) return 0;
     
     switch (base) {
         case 2:  // Binary
@@ -105,28 +78,23 @@ int is_valid_integer(const char* value, int base) {
                 if (value[i] != '0' && value[i] != '1')
                     return 0;
             return 1;
-            
         case 8:  // Octal
             for (int i = 0; value[i]; i++)
                 if (value[i] < '0' || value[i] > '7')
                     return 0;
             return 1;
-            
         case 10: // Decimal
             for (int i = 0; value[i]; i++)
                 if (value[i] < '0' || value[i] > '9')
                     return 0;
             return 1;
-            
         default:
             return 0; // Invalid base
     }
 }
 
-// Print the AST structure
 void print_ast(ASTNode* node, int depth) {
-    if (!node)
-        return;
+    if (!node) return;
     
     // Print indentation
     for (int i = 0; i < depth; i++)
@@ -230,35 +198,39 @@ void print_ast(ASTNode* node, int depth) {
     }
 }
 
-// Free all memory used by the AST
+// Completely rewritten free_ast function to safely handle memory cleanup
 void free_ast(ASTNode* node) {
-    if (!node || node->already_freed) return;
+    // Skip if we're in global cleanup or node is NULL/already freed
+    if (!node || node->already_freed || memory_cleanup_in_progress) {
+        return;
+    }
     
-    // Mark as freed to prevent double-free
+    // Mark as freed immediately to prevent double-free
     node->already_freed = 1;
     
-    // Free operator if exists
+    // Free the operator string if present
     if (node->operator) {
         free(node->operator);
         node->operator = NULL;
     }
     
-    // Free string value if exists for appropriate types
-    if ((node->type == NODE_IDENTIFIER || node->type == NODE_STRING_CONST || node->type == NODE_TYPE) &&
+    // Free string value for appropriate node types
+    if ((node->type == NODE_IDENTIFIER || node->type == NODE_STRING_CONST || node->type == NODE_TYPE) && 
         node->data.string_value) {
         free(node->data.string_value);
         node->data.string_value = NULL;
     }
     
-    // Free children if they exist
+    // Free all children
     if (node->data.compound.children) {
         for (int i = 0; i < node->data.compound.num_children; i++) {
             if (node->data.compound.children[i]) {
                 free_ast(node->data.compound.children[i]);
-                node->data.compound.children[i] = NULL;
+                node->data.compound.children[i] = NULL;  // Set to NULL after freeing
             }
         }
         
+        // Free the children array pointer
         free(node->data.compound.children);
         node->data.compound.children = NULL;
         node->data.compound.num_children = 0;

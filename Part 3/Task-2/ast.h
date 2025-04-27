@@ -1,6 +1,9 @@
 #ifndef AST_H
 #define AST_H
 
+// Add a global flag to control memory cleanup
+extern int memory_cleanup_in_progress;
+
 typedef enum {
     NODE_PROGRAM,
     NODE_VARDECL,
@@ -39,9 +42,8 @@ typedef struct ASTNode {
     } data;
 } ASTNode;
 
-// Add function declaration for convert_base
+// Function declarations
 int convert_base(int value, int from_base);
-
 ASTNode* create_node(NodeType type);
 void add_child(ASTNode* parent, ASTNode* child);
 void print_ast(ASTNode* node, int depth);

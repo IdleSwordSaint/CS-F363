@@ -18,7 +18,7 @@ end;
 
 b := (20, 10);
 
-for a := (10, 8) to b + (10, 2) inc (1, 10) do
+for a := (10,8) to b + (10,2) inc (1,10) do
 begin
     a := a + (1, 2) * a;
     b := b + a + (1, 2); 

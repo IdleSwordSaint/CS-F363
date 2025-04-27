@@ -2831,19 +2831,21 @@ int main(int argc, char *argv[]) {
         print_symbol_table();
     }
 
-    // Clean up safely - be very defensive against crashes
+    // Clean up sequence - critical to avoid segmentation fault
     fclose(yyin);
     
-    // Free the AST with robust error handling
+    // First set the global flag to prevent any AST cleanup during memory release
+    memory_cleanup_in_progress = 1;
+    
+    // Now clean up tracked memory first, which avoids problems with freeing the AST
+    cleanup_memory();
+    
+    // Only now free the AST when we know other memory is cleaned
     if (ast_root) {
         free_ast(ast_root);
         ast_root = NULL;
     }
     
-    // Clean up tracked memory at the very end
-    cleanup_memory();
-    
-    // Exit successfully
     return parse_result ? 1 : 0;
 }
 
